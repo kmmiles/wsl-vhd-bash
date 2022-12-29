@@ -16,9 +16,9 @@ See the blog post here for more information: <https://kmmiles.github.io/wsl/vhd/
 
 ## Install
 
-Debian/Ubuntu: `sudo apt install qemu-utils`
+Debian/Ubuntu: `sudo apt install qemu-utils ntfs-3g`
 
-Redhat/Fedora: `sudo dnf install qemu-img`
+Redhat/Fedora: `sudo dnf install qemu-img ntfsprogs`
 
 ```bash
 cd ~
