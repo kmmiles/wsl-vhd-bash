@@ -4,13 +4,8 @@ Automagically create/format/mount VHD disk images in WSL on boot.
 
 ## Why?
 
-To date, this is the best method i've found of decoupling user data from WSL distributions.
+To date, this is the best method I've found of decoupling user data from WSL distributions.
 This is somewhat comparable to creating `/home` as a separate partition on a native Linux box.
-Personally, I store all projects and code in a VHD, which allows me to:
-
-1) Remove/reinstall a distribution without a tedious backup process
-2) Share the same files across all running WSL distributions
-3) Play with btrfs :)
 
 See the blog post here for more information: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
 
