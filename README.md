@@ -19,6 +19,7 @@ Debian/Ubuntu: `sudo apt install qemu-utils`
 Redhat/Fedora: `sudo dnf install qemu-img`
 
 ```bash
+cd ~
 git clone "https://github.com/kmmiles/wsl-vhd.git"
 cd wsl-vhd
 sudo ln -sf "$(pwd)/wsl-vhd" /usr/local/bin/wsl-vhd
