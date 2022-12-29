@@ -219,7 +219,7 @@ path::to_unix() {
 # wrapper for wsl.exe that provides more useful return codes
 sys::wsl() {
   PATH=$PATH:"/mnt/c/WINDOWS/system32" out="$(wsl.exe "$@" 2>&1 | tr -d '\0')"
-  rc=$?
+  local rc=$?
   logging::debug "wsl.exe $* returned $rc"
   if ((rc != 0)); then
     logging::debug "$out"
@@ -331,12 +331,10 @@ sys::format() {
   fi
   mkfsargs+=("$device")
 
-  out=$(sudo mkfs "${mkfsargs[@]}" 2>&1)
-  rc=$?
-  if ((rc != 0)); then
+  out=$(sudo mkfs "${mkfsargs[@]}" 2>&1) || {
     logging::debug "$out"
     return $ERR_GENERAL
-  fi
+  }
 }
 
 ################################################################################
@@ -400,8 +398,8 @@ vhd::mount() {
   fi
 
   readarray -t pre < <(sys::devices)
-  sys::wsl --mount --vhd --name "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")"
-  rc=$?
+  local rc=0
+  sys::wsl --mount --vhd --name "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")" || rc=$?
   readarray -t post < <(sys::devices)
   device="$(array::diff pre post)"
 
@@ -419,6 +417,8 @@ vhd::mount() {
     if [[ "$fstype" == "none" ]]; then return $ERR_NOT_FORMATTED; fi
     # do the manual mount
     sys::mount "$device" "$(vhd::mountpoint "$vhd")" || return $ERR_GENERAL
+  elif ((rc != 0)); then
+    return $rc
   fi
 
   printf '%s\n' "$device"
@@ -438,12 +438,10 @@ vhd::attach() {
 
   # shellcheck disable=SC2034
   readarray -t pre < <(sys::devices)
-  sys::wsl --mount --bare --vhd --name "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")"
-  rc=$?
+  sys::wsl --mount --bare --vhd --name "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")" || return $?
+
   # shellcheck disable=SC2034
   readarray -t post < <(sys::devices)
-  ((rc == 0)) || return $rc
-
   printf '%s\n' "$(array::diff pre post)"
 }
 
@@ -464,23 +462,20 @@ vhd::unmount() {
 
   # no vhd passed....so unmount everything
   if [[ -z "$vhd" ]]; then
-    local rc=0
-    logging::debug "EVERYTHING"
-    sys::wsl --unmount || :
+    local lasterr=0
+    sys::wsl --unmount || lasterr=$ERR_UNMOUNT
     while read -r device; do
       if sys::broken_mount "$device"; then
         logging::debug "$device: broken mount found"
-        sys::unmount "$device" || rc=$ERR_UNMOUNT
+        sys::unmount "$device" || lasterr=$ERR_UNMOUNT
       fi
     done < <(sys::mounts)
-    sys::wsl --unmount
-    rc=$?
-    return $rc
+    sys::wsl --unmount || lasterr=$ERR_UNMOUNT
+    return $lasterr
   fi
 
   # unmount a specific vhd
-  sys::wsl --unmount "$(vhd::winpath "$vhd")"
-  rc=$?
+  sys::wsl --unmount "$(vhd::winpath "$vhd")" || :
   if device=$(vhd::broken_mount "$vhd"); then
     logging::debug "$vhd: Broken mount detected"
     sys::unmount "$device" || return $ERR_UNMOUNT
@@ -512,17 +507,11 @@ vhd::format() {
 
   # unmount and attach
   vhd::unmount "$vhd" || :
-  device=$(vhd::attach "$vhd")
-  rc=$?
-  if ((rc != 0)); then
-    return $rc
-  fi
+  device=$(vhd::attach "$vhd") || return $?
 
   # format and unmount
-  sys::format "$device" "$fstype"
-  rc=$?
+  sys::format "$device" "$fstype" || return $?
   vhd::unmount "$vhd" || :
-  return $rc
 }
 
 vhd::use() {
@@ -533,24 +522,18 @@ vhd::use() {
   local size_in_mb="${3:-}"
   [[ -n "$size_in_mb" ]] || return 1
 
-  device=$(vhd::mount "$vhd")
-  rc=$?
-  if ((rc == ERR_FILE_NOT_FOUND)); then
-    vhd::create "$vhd" "$size_in_mb"
-    rc2=$?
-    if ((rc2 != 0)); then return $rc2; fi
-
-    vhd::format "$vhd" "$fstype"
-    rc2=$?
-    if ((rc2 != 0)); then return $rc2; fi
-
-    vhd::mount "$vhd" >/dev/null
-    rc2=$?
-    if ((rc2 != 0)); then return $rc2; fi
-  elif ((rc != 0)); then
-    return $rc
-  fi
+  device=$(vhd::mount "$vhd") || {
+    case $? in
+      "$ERR_FILE_NOT_FOUND")
+        vhd::create "$vhd" "$size_in_mb" || return $?
+        vhd::format "$vhd" "$fstype" || return $?
+        vhd::mount "$vhd" >/dev/null || return $?
+        ;;
+      *) return $? ;;
+    esac
+  }
   vhd::chown "$vhd" "${user:-}" "${group:-}" || :
+  printf '%s\n' "$device"
 }
 
 ################################################################################
@@ -606,28 +589,36 @@ EOF
   fi
 
   local lasterr=0
+  local lastvhd=
   while (($# >= 3)); do
     local vhd="${1:-}"
-    local fstype="${2:-}"
-    local size_in_mb="${3:-}"
-
-    if [[ -z "$vhd" ]] || [[ -z "$fstype" ]] \
-      || [[ -z "$size_in_mb" ]] || ((size_in_mb <= 0)); then
+    [[ -n "$vhd" ]] || {
       usage
       return 1
-    fi
+    }
+
+    local fstype="${2:-}"
+    [[ -n "$fstype" ]] || {
+      usage
+      return 1
+    }
+
+    local size_in_mb="${3:-}"
+    [[ -n "$size_in_mb" ]] || {
+      usage
+      return 1
+    }
+
     shift 3
 
-    vhd::use "$vhd" "$fstype" "$size_in_mb"
-    rc=$?
-    if ((rc != 0)); then
-      logging::error "$vhd: $(strerror $rc)"
-      lasterr=$rc
-    fi
+    vhd::use "$vhd" "$fstype" "$size_in_mb" >/dev/null || {
+      lasterr=$?
+      lastvhd=$vhd
+    }
   done
 
   if ((lasterr != 0)); then
-    logging::error "One or more vhds failed to mount. Last error: $(strerror $lasterr)"
+    logging::error "$lastvhd: $(strerror $lasterr)"
     return $lasterr
   fi
 }
@@ -666,12 +657,12 @@ EOF
     return 1
   fi
 
-  vhd::create "$vhd" "$size_in_mb"
-  rc=$?
-  if ((rc != 0)); then
+  local rc
+  vhd::create "$vhd" "$size_in_mb" || {
+    rc=$?
     logging::error "$vhd: Failed to create ${size_in_mb} image: $(strerror $rc)"
-    return 1
-  fi
+    return $rc
+  }
 
   logging::info "$vhd: Succesfully created ${size_in_mb}M image"
 }
@@ -708,12 +699,12 @@ EOF
     return 1
   fi
 
-  device="$(vhd::format"$vhd")"
-  rc=$?
-  if ((rc != 0)); then
+  local rc
+  vhd::format "$vhd" >/dev/null || {
+    rc=$?
     logging::error "$vhd: $(strerror $rc)"
     return $rc
-  fi
+  }
 
   logging::info "$vhd: Formatted as $fstype"
 }
@@ -752,12 +743,12 @@ EOF
     return 1
   fi
 
-  device="$(vhd::mount "$vhd")"
-  rc=$?
-  if ((rc != 0)); then
+  local rc
+  device="$(vhd::mount "$vhd")" || {
+    rc=$?
     logging::error "$vhd: $(strerror $rc)"
     return $rc
-  fi
+  }
 
   logging::info "$vhd: Mounted at $device"
 }
@@ -795,12 +786,14 @@ EOF
     return 1
   fi
 
-  vhd::attach "$vhd"
-  rc=$?
-  if ((rc != 0)); then
+  local rc
+  device="$(vhd::attach "$vhd")" || {
+    rc=$?
     logging::error "$vhd: $(strerror $rc)"
     return $rc
-  fi
+  }
+
+  logging::info "$vhd: Attached to $device"
 }
 
 wsl-vhd-unmount() {
