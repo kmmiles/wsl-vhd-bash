@@ -1,0 +1,92 @@
+#!/bin/bash
+
+source wsl-vhd > /dev/null 2>&1
+
+test::unit() {
+  # test logging::
+  logging::debug "test debug"
+  logging::info "test info"
+  logging::warning "test warning"
+  logging::error "test error"
+  logging::critical "test critical"
+
+  # test path::
+  paths=(
+    '/mnt/c/disk.vhdx'
+    './mnt/c/disk.vhdx'
+    'mnt/c/disk.vhdx'
+    'C:\disk.vhdx'
+    'c:\disk.vhdx'
+    '\\?\C:\foo.vhdx'
+    '\\?\foo.vhdx'
+    'foo.vhdx'
+    '.\.android\foo.vhdx'
+    '~/foo.vhd'
+  )
+
+  printf '====================================\n'
+  printf 'Test path::to_unix\n'
+  printf '====================================\n'
+  for path in "${paths[@]}"; do
+    printf '[%s] -> [%s]\n' "$path" "$(path::to_unix "$path")"
+  done
+
+  printf '====================================\n'
+  printf 'Test path::to_win\n'
+  printf '====================================\n'
+  for path in "${paths[@]}"; do
+    printf '[%s] -> [%s]\n' "$path" "$(path::to_win "$path")"
+  done
+
+  printf '====================================\n'
+  printf 'Test vhd::mountpoint\n'
+  printf '====================================\n'
+  for path in "${paths[@]}"; do
+    printf '[%s] -> [%s]\n' "$path" "$(vhd::mountpoint "$path")"
+  done
+}
+
+test::e2e() {
+  cleanup() {
+    if (($# % 3 != 0)); then
+      logging::debug "invalid opts"
+      return 1
+    fi
+
+    while (($# >= 3)); do
+      local vhd fstype size_in_mb
+      vhd="${1:-}"
+      fstype="${2:-}"
+      size_in_mb="${3:-}"
+
+      shift 3
+
+      vhd::unmount "$vhd"; rc=$?
+      if (( rc != 0 )); then
+        logging::error "$vhd: $(strerror $rc)"
+      fi
+      logging::debug "$(rm -vf "$(vhd::unixpath "$vhd")" 2>&1)"
+    done
+  }
+
+  opts=(
+    /mnt/c/wsl-vhd/code.vhdx ext4 1000
+    /mnt/c/wsl-vhd/code2.vhdx btrfs 4096
+    /mnt/c/wsl-vhd/code3.vhdx ntfs 200
+  )
+
+  cleanup "${opts[@]}" || :
+
+  if ! wsl-vhd-use "${opts[@]}"; then
+    logging::error "Use failed"
+    return 1
+  fi
+}
+
+#export LOG_LEVEL=$LOG_LEVEL_WARN
+export LOG_LEVEL=$LOG_LEVEL_INFO
+#export LOG_LEVEL=$LOG_LEVEL_DEBUG
+#set -x
+test::unit "$@"
+test::e2e "$@"
+
