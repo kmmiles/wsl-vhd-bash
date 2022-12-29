@@ -15,6 +15,7 @@ Personally, I store all projects and code in a VHD, which allows me to:
 ## Install
 
 Debian/Ubuntu: `sudo apt install qemu-utils`
+
 Redhat/Fedora: `sudo dnf install qemu-img`
 
 ```bash
