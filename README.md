@@ -12,6 +12,8 @@ Personally, I store all projects and code in a VHD, which allows me to:
 2) Share the same files across all running WSL distributions
 3) Play with btrfs :)
 
+See the blog post here for more information: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
+
 ## Windows Requirements
 
  - Windows 11 21H2 or higher.
