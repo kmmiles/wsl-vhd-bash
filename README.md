@@ -12,6 +12,11 @@ Personally, I store all projects and code in a VHD, which allows me to:
 2) Share the same files across all running WSL distributions
 3) Play with btrfs :)
 
+## Windows Requirements
+
+ - Windows 11 21H2 or higher.
+ - WSL installed from the Microsoft Store: <https://devblogs.microsoft.com/commandline/a-preview-of-wsl-in-the-microsoft-store-is-now-available/>
+
 ## Install
 
 Debian/Ubuntu: `sudo apt install qemu-utils`
