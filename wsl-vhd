@@ -856,7 +856,7 @@ EOF
     return $rc
   }
 
-  logging::info "$vhd: Succesfully created ${size_in_mb}M image"
+  logging::info "$vhd: Successfully created ${size_in_mb}M image"
 }
 
 wsl-vhd-format() {
