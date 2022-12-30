@@ -388,7 +388,7 @@ sys::filesystems() {
     if PATH=/sbin:/usr/sbin command -v "mkfs.${vals[0]}" >/dev/null 2>&1; then
       printf '%s\n' "${vals[0]}"
     else
-      logging::warning "mkfs.${vals[0]} not found (package not installed?)"
+      logging::info "mkfs.${vals[0]} not found (package not installed?)"
     fi
   done < <(sort -d /proc/filesystems)
 
@@ -397,7 +397,7 @@ sys::filesystems() {
   if PATH=/sbin:/usr/sbin command -v "mkfs.ntfs" >/dev/null 2>&1; then
     printf 'ntfs\n'
   else
-    logging::warning "mkfs.ntfs not found (package not installed?)"
+    logging::info "mkfs.ntfs not found (package not installed?)"
   fi
 }
 
@@ -863,11 +863,11 @@ wsl-vhd-format() {
   logging::debug "wsl-vhd format $*"
   usage() {
     cat <<EOF
-Usage: $PROG_NAME <DEVICE> <FS>
+Usage: $PROG_NAME format <DEVICE> <FS>
 
 Format <DEVICE> with <FS>
 
-Supported filesystems: $(sys::filesystems)
+Supported filesystems: $(sys::filesystems | tr '\n' ' ')
 EOF
   }
 
