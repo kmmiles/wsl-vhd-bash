@@ -488,7 +488,7 @@ vhd::name() {
 vhd::mountpoint() { printf '/mnt/wsl/%s\n' "$(vhd::name "${1:-}")"; }
 
 ################################################################################
-# Usage: vhd::exits <vhd>
+# Usage: vhd::exists <vhd>
 #
 # Returns success if the <vhd> file exists.
 ################################################################################
