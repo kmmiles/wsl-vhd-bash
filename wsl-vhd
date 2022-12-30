@@ -454,14 +454,14 @@ sys::requirements() {
 ################################################################################
 # Usage: vhd::unixpath <vhd>
 #
-# Prints <vhd> in "unix" format.
+# Prints path to <vhd> in "unix" format.
 ################################################################################
 vhd::unixpath() { path::to_unix -a "${1:-}"; }
 
 ################################################################################
 # Usage: vhd::winpath <vhd>
 #
-# Prints <vhd> in Windows format (including the Extended Length Prefix).
+# Prints path to <vhd> in Windows format (including the Extended Length Prefix).
 ################################################################################
 vhd::winpath() { path::to_win -e "${1:-}"; }
 
