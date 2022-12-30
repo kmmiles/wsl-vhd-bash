@@ -9,11 +9,22 @@ Automagically create/format/mount VHD disk images in WSL on boot.
  - Windows 11 21H2 or higher.
  - WSL installed from the Microsoft Store: <https://devblogs.microsoft.com/commandline/a-preview-of-wsl-in-the-microsoft-store-is-now-available/>
 
+## Linux requirements
+
+Debian/Ubuntu: `sudo apt install qemu-utils ntfs-3g util-linux`
+
+Redhat/Fedora: `sudo dnf install qemu-img ntfsprogs util-linux`
+
 ## Install
 
-Debian/Ubuntu: `sudo apt install qemu-utils ntfs-3g`
+Either download the script directly to `/usr/local/bin` and give it execute perms:
 
-Redhat/Fedora: `sudo dnf install qemu-img ntfsprogs`
+```bash
+curl -Ls 'https://raw.githubusercontent.com/kmmiles/wsl-vhd/main/wsl-vhd' | \
+  sudo tee /usr/local/bin/wsl-vhd > /dev/null && sudo chmod +x /usr/local/bin/wsl-vhd
+```
+
+Or check out the project and symlink it:
 
 ```bash
 cd ~
@@ -22,7 +33,11 @@ cd wsl-vhd
 sudo ln -sf "$(pwd)/wsl-vhd" /usr/local/bin/wsl-vhd
 ```
 
+> `wsl-vhd` just needs to exist somewhere that's included in both your and the `root` users `$PATH`.
+
 ## Manual usage
+
+> Invoke as a normal user (don't use `sudo`).
 
 ```
 Usage: wsl-vhd [GLOBAL-OPTIONS] <COMMAND>
@@ -49,6 +64,8 @@ Pass `-h` to any command to view usage e.g. `wsl-vhd use -h`
 
 ## Run on boot
 
+> When run on boot, `wsl-vhd` is executed as `root`. 
+
 Add a line like this to `/etc/wsl.conf`:
 
 ```
@@ -56,9 +73,7 @@ Add a line like this to `/etc/wsl.conf`:
 command = wsl-vhd -v use -u myuser /mnt/c/wsl-vhd/code.vhdx ext4 10000 /tmp/wsl-vhd.log 2>&1
 ```
 Replacing `myuser` with your username and any other adjustments. Then shutdown WSL with `wsl --shutdown` and restart.
-This example will create a 10GB VHD at `C:\wsl-vhd\code.vhdx`, which will be accessible in WSL at `/mnt/wsl/code`.
-On first boot, it will automatically be created and formatted for you. Multiple images can be handled by tacking on more
-arguments e.g.
+Multiple images can be handled by tacking on more arguments e.g.
 
 ```
 [boot]
@@ -69,5 +84,4 @@ command = wsl-vhd -v use -u myuser \
  /tmp/wsl-vhd.log 2>&1
 ```
 
-Also note that the sizes and filesystem types can be adjusted per image. If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, replace `-v` with `-vv` (or `-vvv` for the verbosiest among us)
-
+If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, replace `-v` with `-vv` (or `-vvv` for the verbosiest among us).
