@@ -2,12 +2,7 @@
 
 Automagically create/format/mount VHD disk images in WSL on boot.
 
-## Why?
-
-To date, this is the best method I've found of decoupling user data from WSL distributions.
-This is somewhat comparable to creating `/home` as a separate partition on a native Linux box.
-
-See the blog post here for more information: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
+<https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
 
 ## Windows Requirements
 
