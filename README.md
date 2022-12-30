@@ -46,6 +46,27 @@ command = wsl-vhd -v use -u myuser \
 
 Also note that the sizes and filesystem types can be adjusted per image. If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, replace `-v` with `-vv` (or `-vvv` for the verbosiest among us)
 
-## Manually invoking
+## Manual usage
 
-The script includes a CLI for creating, mounting, unmounting, etc. Check `wsl-vhd -h`.
+```
+Usage: wsl-vhd [GLOBAL-OPTIONS] <COMMAND>
+
+VHD management for WSL.
+
+GLOBAL OPTIONS
+
+  -h  This message
+  -v  Increase verbosity. `-vv` for debug, `-vvv` for extended debug.
+
+COMMANDS
+
+  use           Mount VHD's, creating and formatting if necessary
+  create        Create new VHD without formatting
+  attach        Attach VHD without mounting (aka bare mount)
+  mount         Mount VHD
+  format        Format VHD
+  unmount       Unmount VHD (or all by default)
+  compact       Compact VHD (aka sparsify)
+
+Pass `-h` to any command to view usage e.g. `wsl-vhd use -h`
+```
