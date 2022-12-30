@@ -83,8 +83,8 @@ test::e2e() {
   fi
 }
 
-#export LOG_LEVEL=$LOG_LEVEL_WARN
-export LOG_LEVEL=$LOG_LEVEL_INFO
+export LOG_LEVEL=$LOG_LEVEL_WARN
+#export LOG_LEVEL=$LOG_LEVEL_INFO
 #export LOG_LEVEL=$LOG_LEVEL_DEBUG
 #set -x
 test::unit "$@"

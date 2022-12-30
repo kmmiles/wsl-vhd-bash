@@ -1,5 +1,7 @@
 #!/bin/bash
-#set -euo pipefail
+#
+# VHD management for WSL.
+################################################################################
 set -uo pipefail
 
 ################################################################################
@@ -25,7 +27,13 @@ ERR_ATTACHED_NOT_MOUNTED=6
 ERR_NOT_FORMATTED=7
 ERR_BAD_FILE_EXT=8
 ERR_UNMOUNT=9
+ERR_DEVICE_MISSING=10
 
+################################################################################
+# Usage: strerror <errno>
+#
+# Print string describing <errno>
+################################################################################
 strerror() {
   case "${1:-$ERR_GENERAL}" in
     "$ERR_SUCCESS") printf "Success" ;;
@@ -38,12 +46,16 @@ strerror() {
     "$ERR_NOT_FORMATTED") printf 'Not formatted' ;;
     "$ERR_BAD_FILE_EXT") printf 'Invalid file extension (must be .vhdx)' ;;
     "$ERR_UNMOUNT") printf 'Could not unmount' ;;
+    "$ERR_DEVICE_MISSING") printf 'Device missing' ;;
     *) printf 'Unknown error %s' "${1:-}" ;;
   esac
 }
 
 ################################################################################
 # logging functions
+#
+# Each prints all passed parameters as a string to `stderr`, if the global
+# $LOG_LEVEL is set accordingly. See `main` for how $LOG_LEVEL is adjusted.
 ################################################################################
 logging::debug() {
   if ((LOG_LEVEL <= LOG_LEVEL_DEBUG)); then
@@ -76,25 +88,40 @@ logging::critical() {
 }
 
 ################################################################################
-# array functions
+# Usage: array::sort <params>
+#
+# Prints each parameter in sorted order
 ################################################################################
 array::sort() { printf '%s\n' "$@" | LC_ALL=C sort; }
+
+################################################################################
+# Usage: array::diff <array1> <array2>
+#
+# Prints elements that exist in array2, which do not exist in array1.
+# Arrays are passed by name.
+################################################################################
 array::diff() {
   local -n arr1=$1
   local -n arr2=$2
-  comm -13 <(array::sort "${arr1[@]}") <(array::sort "${arr2[@]}") | head -n 1
+  comm -13 <(array::sort "${arr1[@]}") <(array::sort "${arr2[@]}")
 }
 
 ################################################################################
-# path functions
+# Usage: path::win::is_extlen <winpath>
+#
+# Returns success if <winpath> includes the Extended Length Prefix.
+# <https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file>
 ################################################################################
 path::win::is_extlen() {
   local s="${1:-}"
   [[ "${s:0:4}" == "\\\\?\\" ]]
 }
-# shellcheck disable=SC1003
-path::win::is_unc() { ! path::win::is_extlen && [[ "${1:0:2}" == '\\' ]]; }
 
+################################################################################
+# Usage: path::win::strip_extlen <winpath>
+#
+# Prints <winpath>, omitting the Extended Length Prefix if one exists.
+################################################################################
 path::win::strip_extlen() {
   local path="${1:-}"
   if path::win::is_extlen "$path"; then
@@ -104,6 +131,11 @@ path::win::strip_extlen() {
   fi
 }
 
+################################################################################
+# Usage: path::win::add_extlen <winpath>
+#
+# Prints <winpath>, adding the Extended Length Prefix if none exists.
+################################################################################
 path::win::add_extlen() {
   local path="${1:-}"
   if path::win::is_extlen "$path" || path::win::is_unc "$path"; then
@@ -113,11 +145,24 @@ path::win::add_extlen() {
   fi
 }
 
-# FIXME: doesn't handle ~user
+################################################################################
+# Usage: path::win::is_unc <winpath>
+#
+# Returns success if <winpath> is a UNC path e.g. `\\somemachine\file.txt`
+################################################################################
+# shellcheck disable=SC1003
+path::win::is_unc() { ! path::win::is_extlen && [[ "${1:0:2}" == '\\' ]]; }
+
+################################################################################
+# Usage: path::unix::tilde <unixpath>
+#
+# Prints <unixpath>, expanding the `~` character to `$HOME`
+################################################################################
 path::unix::tilde() {
   local path="${1:-}"
   [[ -n "$path" ]] || return 1
   [[ -n "${HOME:-/root}" ]] || return 1
+  # FIXME: doesn't handle ~user
 
   if [[ $path =~ ^~ ]]; then
     printf '%s\n' "${HOME:-/root}${path:1}"
@@ -126,6 +171,11 @@ path::unix::tilde() {
   fi
 }
 
+################################################################################
+# Usage: path::is_win <path>
+#
+# Returns success if <path> is a Windows path.
+################################################################################
 path::is_win() {
   local path="${1:-}"
   [[ -n "$path" ]] || return 1
@@ -134,18 +184,23 @@ path::is_win() {
     || [[ $path =~ ^\.\\ ]]
 }
 
+################################################################################
+# Usage: path::to_win [options] <path>
+#
+# Prints path, converting it to Windows format.
+#
+# [options]
+#
+# -a  Convert path to absolute
+# -e  Add the Extended Length Prefix
+################################################################################
 path::to_win() {
-  usage() {
-    printf 'Usage: path::to_win [OPTIONS] <PATH>\n\n'
-    printf 'OPTIONS\n\t-a\tAbsolute\n\t-e\tExtended length\n'
-  }
   local OPTIND absolute=false extlen=false
   while getopts 'ae' flag; do
     case "${flag}" in
       a) absolute=true ;;
       e) extlen=true ;;
       *)
-        usage
         return 1
         ;;
     esac
@@ -154,7 +209,6 @@ path::to_win() {
   shift $((OPTIND - 1))
   local path="${1:-}"
   if [[ -z "$path" ]]; then
-    usage
     return 1
   fi
   shift 1
@@ -177,17 +231,22 @@ path::to_win() {
   printf '%s\n' "$path"
 }
 
+################################################################################
+# Usage: path::to_unix [options] <path>
+#
+# Prints <path>, converting it to "unix" format.
+#
+# [options]
+#
+# -a  Convert path to absolute
+# -e  Add the Extended Length Prefix
+################################################################################
 path::to_unix() {
-  usage() {
-    printf 'Usage: path::to_unix [OPTIONS] <PATH>\n\n'
-    printf 'OPTIONS\n\t-a\tAbsolute\n'
-  }
   local OPTIND absolute=false
   while getopts 'a' flag; do
     case "${flag}" in
       a) absolute=true ;;
       *)
-        usage
         return 1
         ;;
     esac
@@ -196,7 +255,6 @@ path::to_unix() {
   shift $((OPTIND - 1))
   local path="${1:-}"
   if [[ -z "$path" ]]; then
-    usage
     return 1
   fi
   shift 1
@@ -213,24 +271,27 @@ path::to_unix() {
 }
 
 ################################################################################
-# sys functions
+# Usage: sys::wsl <parameters>
+#
+# Executes `wsl.exe <parameters>` and returns smarter errors codes.
 ################################################################################
-
-# wrapper for wsl.exe that provides more useful return codes
 sys::wsl() {
+  # XXX: Due to WSL interop, output from `wsl.exe` contains a NULL between every character.
+  #PATH=$PATH:"/mnt/c/WINDOWS/system32" out="$(wsl.exe "$@" 2>/dev/null)"
+
   PATH=$PATH:"/mnt/c/WINDOWS/system32" out="$(wsl.exe "$@" 2>&1 | tr -d '\0')"
   local rc=$?
   logging::debug "wsl.exe $* returned $rc"
+  logging::debug "$out"
   if ((rc != 0)); then
-    logging::debug "$out"
     if grep -q "WSL_E_USER_VHD_ALREADY_ATTACHED" <<<"$out"; then
       return $ERR_ALREADY_ATTACHED
     elif grep -q "ERROR_FILE_NOT_FOUND" <<<"$out"; then
       return $ERR_FILE_NOT_FOUND
     elif grep -q "ERROR_PATH_NOT_FOUND" <<<"$out"; then
       return $ERR_FILE_NOT_FOUND
-    elif grep -q "The disk was attached but failed to mount: No such device" <<<"$out"; then
-      return $ERR_ATTACHED_NOT_MOUNTED
+    #elif grep -q "The disk was attached but failed to mount: No such device" <<<"$out"; then
+    #  return $ERR_ATTACHED_NOT_MOUNTED
     elif grep -q "attached but failed to mount" <<<"$out"; then
       return $ERR_ATTACHED_NOT_MOUNTED
     else
@@ -239,7 +300,11 @@ sys::wsl() {
   fi
 }
 
-# accept device name or path, print it's filesystem type, on none on failure
+################################################################################
+# Usage: sys::fstype <device>
+#
+# Print the underlying filesystem type of <device> or `none` on failure.
+################################################################################
 sys::fstype() {
   local device="${1:-}"
   [[ -n "$device" ]] || return 1
@@ -248,13 +313,33 @@ sys::fstype() {
     --output value "$device" 2>/dev/null || printf 'none\n'
 }
 
+################################################################################
+# Usage: sys::devices
+#
+# Prints path of each block device, skipping partitions e.g. `/dev/sdd1`.
+################################################################################
 sys::devices() {
   lsblk --ascii --noheadings --output NAME | grep -vE "^\`-" | while read -r device_name; do
     printf '/dev/%s\n' "$device_name"
   done
 }
 
+################################################################################
+# Usage: sys::mounts
+#
+# Prints device path of every mount, skipping any that don't start with `/dev/`
+################################################################################
 sys::mounts() { cut -d' ' -f 1 /proc/mounts | grep -E "^/dev/" | sort -u; }
+
+################################################################################
+# Usage: sys::mount <device> <mountpoint>
+#
+# Mount <device> to <mountpoint> using `mount`.
+#
+# XXX: This is exclusively for NTFS filesystems. The WSL kernel doesn't ship
+# with NTFS support by default; WSL can only attach the device, not mount it.
+# So we rely on the FUSE userland driver and `mount` it ourselves .
+################################################################################
 sys::mount() {
   local device="${1:-}"
   [[ -n "$device" ]] || return 1
@@ -269,19 +354,34 @@ sys::mount() {
   fi
 }
 
+################################################################################
+# Usage: sys::unmount <device>
+#
+# Unmount <device> using `umount`.
+#
+# XXX: This is exclusively for NTFS filesystems (see sys::mount)
+################################################################################
 sys::unmount() {
   local device="${1:-}"
   [[ -n "$device" ]] || return 1
   sudo umount --all-targets "$device" || return $ERR_UNMOUNT
 }
 
-sys::broken_mount() {
+################################################################################
+# Usage: sys::device_exists <device>
+#
+# Returns success if <device> exists. See `vhd::broken_mount`.
+################################################################################
+sys::device_exists() {
   local device="${1:-}"
-  [[ -n "$device" ]] || return 1
-  [[ ! -b "$device" ]]
+  [[ -n "$device" ]] && [[ -b "$device" ]]
 }
 
-# print valid filesystems
+################################################################################
+# Usage: sys::filesystems
+#
+# Print supported filesystems, one per line.
+################################################################################
 sys::filesystems() {
   while read -ra vals; do
     [[ "${vals[0]}" == "nodev" ]] && continue
@@ -292,6 +392,8 @@ sys::filesystems() {
     fi
   done < <(sort -d /proc/filesystems)
 
+  # ntfs is an exception, because we're using a FUSE userland driver.
+  # TODO: Should look at other potential FUSE filesystems.
   if PATH=/sbin:/usr/sbin command -v "mkfs.ntfs" >/dev/null 2>&1; then
     printf 'ntfs\n'
   else
@@ -299,20 +401,15 @@ sys::filesystems() {
   fi
 }
 
-# check systems requirements
-sys::requirements() {
-  requirements=('sudo' 'qemu-img')
-  for requirement in "${requirements[@]}"; do
-    if ! command -v "$requirement" >/dev/null 2>&1; then
-      logging::error "Required program missing $requirement"
-      logging::error "Ubuntu/Debian: sudo apt install qemu-utils"
-      logging::error "Redhat: sudo dnf install qemu-img"
-      return 1
-    fi
-  done
-  logging::debug "All requirements satisfied."
-}
-
+################################################################################
+# Usage: sys::format <device> <fstype>
+#
+# Format <device> with `mkfs.$fstype`.
+#
+# If <fstype> is `ntfs`, a partition will be created on <device>, which will be
+# formatted instead. If we create it on the device, as every other filesystem,
+# Windows will be unable to read it.
+################################################################################
 sys::format() {
   local device="${1:-}"
   [[ -n "$device" ]] || return 1
@@ -321,7 +418,6 @@ sys::format() {
 
   mkfsargs=("-t" "$fstype")
   if [[ "$fstype" == "ntfs" ]]; then
-    # XXX: ntfs requires a partition to be read by Windows, so create it.
     mkfsargs+=("-f")
     if ! out=$(printf 'n\np\n1\n\n\nt 1\n7\nw\n' | sudo fdisk "$device" 2>&1); then
       logging::debug "$out"
@@ -338,18 +434,64 @@ sys::format() {
 }
 
 ################################################################################
-# vhd functions. each accepts a path (in any format) to a vhd
-#t###############################################################################
+# Usage: sys::requirements
+#
+# Check system requirements and log errors if we don't meet them.
+################################################################################
+sys::requirements() {
+  requirements=('sudo' 'qemu-img' 'mkfs.ntfs')
+  for requirement in "${requirements[@]}"; do
+    if ! command -v "$requirement" >/dev/null 2>&1; then
+      logging::error "Required program missing $requirement"
+      logging::error "Ubuntu/Debian: sudo apt install qemu-utils ntfs-3g"
+      logging::error "Redhat: sudo dnf install ntfsprogs"
+      return 1
+    fi
+  done
+  logging::debug "All requirements satisfied."
+}
+
+################################################################################
+# Usage: vhd::unixpath <vhd>
+#
+# Prints <vhd> in "unix" format.
+################################################################################
 vhd::unixpath() { path::to_unix -a "${1:-}"; }
+
+################################################################################
+# Usage: vhd::winpath <vhd>
+#
+# Prints <vhd> in Windows format (including the Extended Length Prefix).
+################################################################################
 vhd::winpath() { path::to_win -e "${1:-}"; }
 
+################################################################################
+# Usage: vhd::name <vhd>
+#
+# Prints the "name" of the vhd; it's unix basename minus extension. The name is
+# as part of the mountpoint.
+#
+# Example: `C:\foobar.vhdx` will have the name `foobar`.
+################################################################################
 vhd::name() {
   filename=$(basename "$(vhd::unixpath "${1:-}")")
   printf '%s\n' "$(basename "$filename" ".${filename#*.}")"
 }
 
+################################################################################
+# Usage: vhd::mountpoint <vhd>
+#
+# Prints the mountpoint of <vhd> (whether it's mounted or not)
+#
+# Example: `C:\foobar.vhdx` will have a mountpath of `/mnt/wsl/foobar`.
+################################################################################
 vhd::mountpoint() { printf '/mnt/wsl/%s\n' "$(vhd::name "${1:-}")"; }
 
+################################################################################
+# Usage: vhd::exits <vhd>
+#
+# Returns success if the <vhd> file exists.
+################################################################################
 vhd::exists() {
   local path="${1:-}"
   [[ -n "$path" ]] || return 1
@@ -359,8 +501,11 @@ vhd::exists() {
   fi
 }
 
-# attempt to find if it's already mounted.
-# won't catch any that are only attached.
+################################################################################
+# Usage: vhd::is_mounted <vhd>
+#
+# Returns success if the <vhd> is mounted, and prints the device it's mounted to
+################################################################################
 vhd::is_mounted() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
@@ -376,7 +521,13 @@ vhd::is_mounted() {
   printf '/dev/%s\n' "$device_name"
 }
 
-# vhd::chown "/mnt/c/code.vhdx" "kmmiles" "kmmiles"
+################################################################################
+# Usage: vhd::chown <vhd> [user] [group]
+#
+# Changes ownership of <vhd>'s mountpoint.
+#
+# XXX: <vhd> should be mounted first, but that's callers responsibility.
+################################################################################
 vhd::chown() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
@@ -386,6 +537,11 @@ vhd::chown() {
   if [[ -n "$group" ]]; then sudo chgrp "$group" "$(vhd::mountpoint "$vhd")" || return 1; fi
 }
 
+################################################################################
+# Usage: vhd::mount <vhd>
+#
+# Mounts <vhd>
+################################################################################
 vhd::mount() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
@@ -401,7 +557,7 @@ vhd::mount() {
   local rc=0
   sys::wsl --mount --vhd --name "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")" || rc=$?
   readarray -t post < <(sys::devices)
-  device="$(array::diff pre post)"
+  device="$(array::diff pre post | head -n 1)"
 
   # XXX: We tried to mount it, but it came back attached but not mounted.
   # If there's a filesystem, try to mount it manually with `mount`.
@@ -424,6 +580,12 @@ vhd::mount() {
   printf '%s\n' "$device"
 }
 
+################################################################################
+# Usage: vhd::attach <vhd>
+#
+# Attaches <vhd> and prints the device on success.
+# The device will be exposed to WSL, but not mounted.
+################################################################################
 vhd::attach() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
@@ -442,31 +604,43 @@ vhd::attach() {
 
   # shellcheck disable=SC2034
   readarray -t post < <(sys::devices)
-  printf '%s\n' "$(array::diff pre post)"
+  printf '%s\n' "$(array::diff pre post | head -n 1)"
 }
 
-# we're looking for something that's mounted, but lacks it's backing device and/or file
-# this can happen if we manually mounted something and ran wsl.exe --unmount, which can
-# only detach the device, not unmount it.
+################################################################################
+# Usage: vhd::broken_mount <vhd>
+#
+# Returns success if <vhd> has a broken mount. This means the device is mounted,
+# but doesn't exist. This can happen if `wsl.exe --unmount` detaches the device,
+# but fails to unmount it (which is the case for any device manually mounted
+# with `mount`, like NTFS).
+################################################################################
 vhd::broken_mount() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
   [[ -f "$(vhd::unixpath "$vhd")" ]] || return 1
   device=$(vhd::is_mounted "$vhd") || return 1
-  if sys::broken_mount "$device"; then printf '%s\n' "$device"; fi
+  if ! sys::device_exists "$device"; then printf '%s\n' "$device"; fi
 }
 
+################################################################################
+# Usage: vhd::unmount <vhd>
+#
+# Unmounts <vhd>.
+################################################################################
 vhd::unmount() {
   local vhd="${1:-}"
   local device
 
-  # no vhd passed....so unmount everything
+  # no vhd passed....so unmount everything.
   if [[ -z "$vhd" ]]; then
     local lasterr=0
     sys::wsl --unmount || lasterr=$ERR_UNMOUNT
+
+    # check for cases where a device is mounted, but the device is missing.
     while read -r device; do
-      if sys::broken_mount "$device"; then
-        logging::debug "$device: broken mount found"
+      if ! sys::device_exists "$device"; then
+        logging::debug "$device: Device is missing. Broken mount?"
         sys::unmount "$device" || lasterr=$ERR_UNMOUNT
       fi
     done < <(sys::mounts)
@@ -474,14 +648,19 @@ vhd::unmount() {
     return $lasterr
   fi
 
-  # unmount a specific vhd
+  # vhd passed....so unmount it.
   sys::wsl --unmount "$(vhd::winpath "$vhd")" || :
   if device=$(vhd::broken_mount "$vhd"); then
-    logging::debug "$vhd: Broken mount detected"
+    logging::debug "$vhd: Broken mount ($device is missing)."
     sys::unmount "$device" || return $ERR_UNMOUNT
   fi
 }
 
+################################################################################
+# Usage: vhd::create <vhd> <size_in_mb>
+#
+# Creates <vhd> with `qemu-img`.
+################################################################################
 vhd::create() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
@@ -498,7 +677,12 @@ vhd::create() {
   fi
 }
 
-# unmount->attach->format->unmount
+################################################################################
+# Usage: vhd::format <vhd> <fstype>
+#
+# Formats <vhd> with <fstype>. If the <vhd> is currently mounted, it will be
+# unmounted.
+################################################################################
 vhd::format() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
@@ -514,6 +698,11 @@ vhd::format() {
   vhd::unmount "$vhd" || :
 }
 
+################################################################################
+# Usage: vhd::use <vhd> <fstype> <size_in_mb>
+#
+# Mounts <vhd>. If <vhd> doesn't exist, it will created and formatted first.
+################################################################################
 vhd::use() {
   local vhd="${1:-}"
   [[ -n "$vhd" ]] || return 1
@@ -521,15 +710,18 @@ vhd::use() {
   [[ -n "$fstype" ]] || return 1
   local size_in_mb="${3:-}"
   [[ -n "$size_in_mb" ]] || return 1
+  local rc
 
+  logging::debug "$*"
   device=$(vhd::mount "$vhd") || {
-    case $? in
+    rc=$?
+    case $rc in
       "$ERR_FILE_NOT_FOUND")
         vhd::create "$vhd" "$size_in_mb" || return $?
         vhd::format "$vhd" "$fstype" || return $?
         vhd::mount "$vhd" >/dev/null || return $?
         ;;
-      *) return $? ;;
+      *) return $rc ;;
     esac
   }
   vhd::chown "$vhd" "${user:-}" "${group:-}" || :
@@ -537,7 +729,7 @@ vhd::use() {
 }
 
 ################################################################################
-# cli functions
+# cli functions.
 #################################################################################
 
 wsl-vhd-use() {
