@@ -28,6 +28,7 @@ ERR_NOT_FORMATTED=7
 ERR_BAD_FILE_EXT=8
 ERR_UNMOUNT=9
 ERR_DEVICE_MISSING=10
+ERR_BUSY=11
 
 ################################################################################
 # Usage: strerror <errno>
@@ -47,6 +48,7 @@ strerror() {
     "$ERR_BAD_FILE_EXT") printf 'Invalid file extension (must be .vhdx)' ;;
     "$ERR_UNMOUNT") printf 'Could not unmount' ;;
     "$ERR_DEVICE_MISSING") printf 'Device missing' ;;
+    "$ERR_BUSY") printf 'Windows is using the VHD (try ejecting)' ;;
     *) printf 'Unknown error %s' "${1:-}" ;;
   esac
 }
@@ -290,6 +292,8 @@ sys::wsl() {
       return $ERR_FILE_NOT_FOUND
     elif grep -q "ERROR_PATH_NOT_FOUND" <<<"$out"; then
       return $ERR_FILE_NOT_FOUND
+    elif grep -q "it is being used by another process" <<<"$out"; then
+      return $ERR_BUSY
     #elif grep -q "The disk was attached but failed to mount: No such device" <<<"$out"; then
     #  return $ERR_ATTACHED_NOT_MOUNTED
     elif grep -q "attached but failed to mount" <<<"$out"; then
@@ -364,7 +368,7 @@ sys::mount() {
 sys::unmount() {
   local device="${1:-}"
   [[ -n "$device" ]] || return 1
-  sudo umount --all-targets "$device" || return $ERR_UNMOUNT
+  sudo umount --all-targets "$device" >/dev/null 2>&1 || return $ERR_UNMOUNT
 }
 
 ################################################################################
@@ -624,6 +628,21 @@ vhd::broken_mount() {
 }
 
 ################################################################################
+# Usage: vhd::mountpoints
+#
+# Prints the mountpoint of every mounted vhd.
+################################################################################
+vhd::mountpoints() {
+  local mountpoint
+  while read -ra arr; do
+    mountpoint="${arr[1]}"
+    if [[ "${mountpoint:0:9}" == '/mnt/wsl/' ]]; then
+      printf '%s\n' "${arr[1]}"
+    fi
+  done </proc/mounts
+}
+
+################################################################################
 # Usage: vhd::unmount <vhd>
 #
 # Unmounts <vhd>.
@@ -634,26 +653,23 @@ vhd::unmount() {
 
   # no vhd passed....so unmount everything.
   if [[ -z "$vhd" ]]; then
-    local lasterr=0
-    sys::wsl --unmount || lasterr=$ERR_UNMOUNT
-
-    # check for cases where a device is mounted, but the device is missing.
-    while read -r device; do
-      if ! sys::device_exists "$device"; then
-        logging::debug "$device: Device is missing. Broken mount?"
-        sys::unmount "$device" || lasterr=$ERR_UNMOUNT
-      fi
-    done < <(sys::mounts)
-    sys::wsl --unmount || lasterr=$ERR_UNMOUNT
-    return $lasterr
+    sys::wsl --unmount || :
+    while read -r mountpoint; do
+      [[ -n "$mountpoint" ]] || continue
+      sys::unmount "$mountpoint" || :
+    done < <(vhd::mountpoints)
+    return 0
   fi
 
   # vhd passed....so unmount it.
-  sys::wsl --unmount "$(vhd::winpath "$vhd")" || :
-  if device=$(vhd::broken_mount "$vhd"); then
-    logging::debug "$vhd: Broken mount ($device is missing)."
-    sys::unmount "$device" || return $ERR_UNMOUNT
+  vhd="$(vhd::unixpath "$vhd")"
+  if [[ "${vhd#*.}" != "vhdx" ]]; then
+    logging::error "$(strerror "$ERR_BAD_FILE_EXT")"
+    return $ERR_BAD_FILE_EXT
   fi
+
+  sys::wsl --unmount "$(vhd::winpath "$vhd")" || :
+  sys::unmount "$(vhd::mountpoint "$vhd")" || :
 }
 
 ################################################################################
@@ -733,7 +749,7 @@ vhd::use() {
 #################################################################################
 
 wsl-vhd-use() {
-  logging::debug "wsl-vhd use [OPTIONS] $*"
+  logging::debug "wsl-vhd use $*"
   usage() {
     cat <<EOF
 Usage: $PROG_NAME use <VHD> <FS_TYPE> <SIZE_IN_MB> [...]
@@ -804,15 +820,15 @@ EOF
     shift 3
 
     vhd::use "$vhd" "$fstype" "$size_in_mb" >/dev/null || {
-      lasterr=$?
-      lastvhd=$vhd
+      rc=$?
+      if ((rc != 0 && rc != ERR_ALREADY_MOUNTED)); then
+        logging::error "$vhd: $(strerror $rc)"
+        return $lasterr
+      else
+        logging::info "$vhd: Succesfully mounted."
+      fi
     }
   done
-
-  if ((lasterr != 0)); then
-    logging::error "$lastvhd: $(strerror $lasterr)"
-    return $lasterr
-  fi
 }
 
 wsl-vhd-create() {
