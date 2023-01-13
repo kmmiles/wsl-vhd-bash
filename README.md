@@ -9,7 +9,7 @@ The blogpost which inspired this project: <https://kmmiles.github.io/wsl/vhd/lin
  - Windows 11 21H2 or higher.
  - WSL installed from the Microsoft Store: <https://devblogs.microsoft.com/commandline/a-preview-of-wsl-in-the-microsoft-store-is-now-available/>
 
-## Linux requirements
+## Install dependencies
 
 ### Minimum
 
