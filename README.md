@@ -37,8 +37,7 @@ sudo dnf install util-linux qemu-img btrfs-progs ntfsprogs exfatprogs fuse-exfat
 Either download the script directly to `/usr/local/bin` and give it execute perms:
 
 ```bash
-curl -Ls 'https://raw.githubusercontent.com/kmmiles/wsl-vhd/main/wsl-vhd' | \
-  sudo tee /usr/local/bin/wsl-vhd > /dev/null && sudo chmod +x /usr/local/bin/wsl-vhd
+curl -Ls 'https://raw.githubusercontent.com/kmmiles/wsl-vhd-bash/main/wsl-vhd' | sudo tee /usr/local/bin/wsl-vhd > /dev/null && sudo chmod +x /usr/local/bin/wsl-vhd
 ```
 
 Or check out the project and symlink it:
