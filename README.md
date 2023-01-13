@@ -66,8 +66,9 @@ fstype=ext4
 size_in_mb=100
 ```
 
-- Running `wsl-vhd up` will mount `C:\wsl-vhd\test-ext4.vhdx` to `/mnt/wsl/test-ext4`.
-- If the VHD doesn't exist yet, it will automatically be created and formatted.
+Now run `wsl-vhd up`.
+
+- `C:\wsl-vhd\test-ext4.vhdx` will be created, formatted and mounted at `/mnt/wsl/test-ext4`.
 - The mountpoint will be given read/write access to your WSL user.
 - Running `wsl-vhd down`  will unmount it and any other disks in the config file.
 
