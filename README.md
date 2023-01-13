@@ -87,6 +87,12 @@ If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need mo
 
 Run `wsl-vhd -h` to view additional commands. 
 
+# Uninstall
+
+```bash
+sudo rm -f $(which wsl-vhd) /etc/wsl-vhd.conf
+```
+
 # Changelog
 
 ## 1/3/2023
