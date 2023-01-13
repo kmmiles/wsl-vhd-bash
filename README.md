@@ -43,9 +43,7 @@ curl -Ls 'https://raw.githubusercontent.com/kmmiles/wsl-vhd-bash/main/wsl-vhd' |
 Or check out the project and symlink it:
 
 ```bash
-cd ~
-git clone "https://github.com/kmmiles/wsl-vhd-bash.git"
-sudo ln -sf "$(pwd)/wsl-vhd-bash/wsl-vhd /usr/local/bin/wsl-vhd
+cd ~ && git clone "https://github.com/kmmiles/wsl-vhd-bash.git" && sudo ln -sf "$(pwd)/wsl-vhd-bash/wsl-vhd /usr/local/bin/wsl-vhd
 ```
 
 > `wsl-vhd` just needs to exist somewhere that's included in both your and the `root` users `$PATH`.
