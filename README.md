@@ -1,4 +1,4 @@
-# wsl-vhd
+# wsl-vhd-bash
 
 Create, manage and automount VHD's on boot.
 
