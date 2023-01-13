@@ -45,9 +45,8 @@ Or check out the project and symlink it:
 
 ```bash
 cd ~
-git clone "https://github.com/kmmiles/wsl-vhd.git"
-cd wsl-vhd
-sudo ln -sf "$(pwd)/wsl-vhd" /usr/local/bin/wsl-vhd
+git clone "https://github.com/kmmiles/wsl-vhd-bash.git"
+sudo ln -sf "$(pwd)/wsl-vhd-bash/wsl-vhd /usr/local/bin/wsl-vhd
 ```
 
 > `wsl-vhd` just needs to exist somewhere that's included in both your and the `root` users `$PATH`.
