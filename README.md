@@ -98,5 +98,4 @@ sudo rm -f $(which wsl-vhd) /etc/wsl-vhd.conf
 ## 1/3/2023
 
 - VHD's can now be managed in a config file, `/etc/wsl-vhd.conf`.
-- Added ability to specify `partition` in configuration.
 - Added filesystem support for `ntfs`, `exfat`, `vfat`, `fat` and `msdos`
