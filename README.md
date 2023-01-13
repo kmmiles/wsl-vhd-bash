@@ -19,7 +19,7 @@ Redhat/Fedora: `sudo dnf install util-linux qemu-img`
 
 ### With additional filesystems
 
-Adds support for `btrfs`, `ntfs`, `exfat` and `vfat`/`fat`/`msdos`: 
+Adds support for `btrfs`, `ntfs`, `exfat`, `vfat`, `fat`, `msdos`: 
 
 Debian/Ubuntu: `sudo apt install util-linux qemu-utils btrfs-progs ntfs-3g exfat-utils exfat-fuse dosfstools`
 
