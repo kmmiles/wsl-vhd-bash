@@ -87,32 +87,9 @@ command = wsl-vhd up > /tmp/wsl-vhd.log 2>&1
 
 If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, replace `-v` with `-vv` (or `-vvv` for the verbosiest among us).
 
-## Manual usage
+# Additional usage
 
-> Invoke as a normal user (don't use `sudo`).
-
-```
-Usage: wsl-vhd [GLOBAL-OPTIONS] <COMMAND>
-
-VHD management for WSL.
-
-GLOBAL OPTIONS
-
-  -h  This message
-  -v  Increase verbosity. `-vv` for debug, `-vvv` for extended debug.
-
-COMMANDS
-
-  use           Mount VHD's, creating and formatting if necessary
-  create        Create new VHD without formatting
-  attach        Attach VHD without mounting (aka bare mount)
-  mount         Mount VHD
-  format        Format VHD
-  unmount       Unmount VHD (or all by default)
-  compact       Compact VHD (aka sparsify)
-
-Pass `-h` to any command to view usage e.g. `wsl-vhd use -h`
-```
+Run `wsl-vhd -h` to view additional commands. 
 
 # Changelog
 
