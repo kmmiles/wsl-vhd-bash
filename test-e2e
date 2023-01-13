@@ -1,0 +1,21 @@
+#!/bin/bash
+
+main() {
+  local configfile="./etc/wsl-vhd.conf.test"
+  #local name="dosbox"
+
+  wsl-vhd unmount || :
+  rm -f /mnt/c/wsl-vhd/*.vhdx || :
+  wsl-vhd up -f "$configfile" "${name:-}"
+  find /mnt/wsl -maxdepth 1 -mindepth 1 -type d | while read -r mountpoint; do
+   file="$mountpoint/hello.txt"
+   printf 'Testing write to %s\n' "$file"
+   if ! touch "$file"; then
+     printf 'Failed to write to %s\n' "$file"
+   else
+    echo "hello, world" > "$file"
+   fi
+ done
+}
+
+main "$@"

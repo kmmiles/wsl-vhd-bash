@@ -1,8 +1,8 @@
 # wsl-vhd
 
-Automagically create/format/mount VHD disk images in WSL on boot.
+Create, manage and automount VHD's on boot.
 
-<https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
+The blogpost which inspired this project: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
 
 ## Windows Requirements
 
@@ -11,9 +11,26 @@ Automagically create/format/mount VHD disk images in WSL on boot.
 
 ## Linux requirements
 
-Debian/Ubuntu: `sudo apt install qemu-utils ntfs-3g util-linux`
+### Minimum
 
-Redhat/Fedora: `sudo dnf install qemu-img ntfsprogs util-linux`
+Debian/Ubuntu: `sudo apt install util-linux qemu-utils`
+
+Redhat/Fedora: `sudo dnf install util-linux qemu-img`
+
+### With additional filesystems
+
+Adds support for `btrfs`, `ntfs`, `exfat` and `vfat`/`fat`/`msdos`: 
+
+Debian/Ubuntu: `sudo apt install util-linux qemu-utils btrfs-progs ntfs-3g exfat-utils exfat-fuse dosfstools`
+
+Fedora: 
+```bash
+dnf install -y \
+  https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+sudo dnf install util-linux qemu-img btrfs-progs ntfsprogs exfatprogs fuse-exfat dosfstools
+```
+
+> Use `wsl-vhd filesystems` to display all filesystems your machine supports.
 
 ## Install
 
@@ -34,6 +51,40 @@ sudo ln -sf "$(pwd)/wsl-vhd" /usr/local/bin/wsl-vhd
 ```
 
 > `wsl-vhd` just needs to exist somewhere that's included in both your and the `root` users `$PATH`.
+
+## Configuration
+
+Create and add the following to `/etc/wsl-vhd.conf`:
+
+```
+[global]
+uid=1000
+gid=1000
+
+[C:\wsl-vhd\test-ext4.vhdx]
+fstype=ext4
+size_in_mb=100
+```
+
+- Running `wsl-vhd up` will mount `C:\wsl-vhd\test-ext4.vhdx` to `/mnt/wsl/test-ext4`.
+- If the VHD doesn't exist yet, it will automatically be created and formatted.
+- The mountpoint will be given read/write access to your WSL user.
+- Running `wsl-vhd down`  will unmount it and any other disks in the config file.
+
+See `./etc/wsl-vhd.conf.test` for additional options.
+
+## Run on boot
+
+> When run on boot, `wsl-vhd` is executed as `root`. 
+
+Add a line like this to `/etc/wsl.conf`:
+
+```
+[boot]
+command = wsl-vhd up > /tmp/wsl-vhd.log 2>&1
+```
+
+If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, replace `-v` with `-vv` (or `-vvv` for the verbosiest among us).
 
 ## Manual usage
 
@@ -62,26 +113,10 @@ COMMANDS
 Pass `-h` to any command to view usage e.g. `wsl-vhd use -h`
 ```
 
-## Run on boot
+# Changelog
 
-> When run on boot, `wsl-vhd` is executed as `root`. 
+## 1/3/2023
 
-Add a line like this to `/etc/wsl.conf`:
-
-```
-[boot]
-command = wsl-vhd -v use -u myuser /mnt/c/wsl-vhd/code.vhdx ext4 10000 /tmp/wsl-vhd.log 2>&1
-```
-Replacing `myuser` with your username and any other adjustments. Then shutdown WSL with `wsl --shutdown` and restart.
-Multiple images can be handled by tacking on more arguments e.g.
-
-```
-[boot]
-command = wsl-vhd -v use -u myuser \
- /mnt/c/wsl-vhd/code.vhdx ext4 10000 \
- /mnt/c/wsl-vhd/code2.vhdx btrfs 20000 \
- /mnt/c/wsl-vhd/code3.vhdx ntfs 30000 > \
- /tmp/wsl-vhd.log 2>&1
-```
-
-If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, replace `-v` with `-vv` (or `-vvv` for the verbosiest among us).
+- VHD's can now be managed in a config file, `/etc/wsl-vhd.conf`.
+- Added ability to specify `partition` in configuration.
+- Added filesystem support for `ntfs`, `exfat`, `vfat`, `fat` and `msdos`

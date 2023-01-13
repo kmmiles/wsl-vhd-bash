@@ -8,6 +8,7 @@ set -uo pipefail
 # globals
 ################################################################################
 PROG_NAME="$(basename "$0")"
+MOUNT_ROOT="/mnt/wsl" # XXX: If you changed automount.root in /etc/wsl.conf
 
 LOG_LEVEL_UNSET=0
 LOG_LEVEL_DEBUG=10
@@ -15,20 +16,23 @@ LOG_LEVEL_INFO=20
 LOG_LEVEL_WARN=30
 LOG_LEVEL_ERROR=40
 LOG_LEVEL_CRITICAL=40
-LOG_LEVEL=$LOG_LEVEL_WARN
+LOG_LEVEL=$LOG_LEVEL_INFO
 
 ERR_SUCCESS=0
 ERR_GENERAL=1
-ERR_FILE_NOT_FOUND=2
-ERR_ALREADY_ATTACHED=3
-ERR_ALREADY_MOUNTED=4
-ERR_NOT_MOUNTED=5
-ERR_ATTACHED_NOT_MOUNTED=6
-ERR_NOT_FORMATTED=7
-ERR_BAD_FILE_EXT=8
-ERR_UNMOUNT=9
-ERR_DEVICE_MISSING=10
-ERR_BUSY=11
+ERR_ARGS=2
+ERR_FILE_NOT_FOUND=3
+ERR_ALREADY_ATTACHED=4
+ERR_ALREADY_MOUNTED=5
+ERR_NOT_MOUNTED=6
+ERR_ATTACHED_NOT_MOUNTED=7
+ERR_NOT_FORMATTED=8
+ERR_BAD_FILE_EXT=9
+ERR_UNMOUNT=10
+ERR_DEVICE_MISSING=11
+ERR_BUSY=12
+ERR_TOO_SMALL=13
+ERR_INI_SECTION_NOT_FOUND=13
 
 ################################################################################
 # Usage: strerror <errno>
@@ -49,8 +53,21 @@ strerror() {
     "$ERR_UNMOUNT") printf 'Could not unmount' ;;
     "$ERR_DEVICE_MISSING") printf 'Device missing' ;;
     "$ERR_BUSY") printf 'Windows is using the VHD (try ejecting)' ;;
+    "$ERR_TOO_SMALL") printf 'Device too small for filesystem' ;;
     *) printf 'Unknown error %s' "${1:-}" ;;
   esac
+}
+
+################################################################################
+# Usage: string::trim <string>
+#
+# Prints string with leading/trailing whitespace removed
+################################################################################
+string::trim() {
+  local str="$*"
+  str="${str#"${str%%[![:space:]]*}"}"
+  var="${str%"${str##*[![:space:]]}"}"
+  printf '%s' "$var"
 }
 
 ################################################################################
@@ -67,7 +84,8 @@ logging::debug() {
 
 logging::info() {
   if ((LOG_LEVEL <= LOG_LEVEL_INFO)); then
-    printf >&2 'INFO: [%s] %s\n' "${FUNCNAME[1]}" "$*"
+    #printf >&2 'INFO: [%s] %s\n' "${FUNCNAME[1]}" "$*"
+    printf >&2 '%s\n' "$*"
   fi
 }
 
@@ -197,7 +215,7 @@ path::is_win() {
 # -e  Add the Extended Length Prefix
 ################################################################################
 path::to_win() {
-  local OPTIND absolute=false extlen=false
+  local OPTIND rc absolute=false extlen=false
   while getopts 'ae' flag; do
     case "${flag}" in
       a) absolute=true ;;
@@ -244,7 +262,7 @@ path::to_win() {
 # -e  Add the Extended Length Prefix
 ################################################################################
 path::to_unix() {
-  local OPTIND absolute=false
+  local OPTIND rc absolute=false
   while getopts 'a' flag; do
     case "${flag}" in
       a) absolute=true ;;
@@ -273,14 +291,123 @@ path::to_unix() {
 }
 
 ################################################################################
+# Usage: ini::is_section <line>
+#
+# Return success if <line> is a section, and print it's name
+################################################################################
+ini::is_section() {
+  local line="${1:-}"
+  local len="${#line}"
+  if [[ "${line:0:1}" == "[" ]] && [[ "${line:$((len - 1)):1}" == "]" ]]; then
+    printf '%s\n' "${line:1:$((len - 2))}"
+    return 0
+  fi
+  return 1
+}
+
+################################################################################
+# Usage: ini::read_section <output> <section> <file>
+#
+# Read values from <section> of <file> and store into <output>
+# <output> is a name reference to an associative array
+################################################################################
+ini::read_section() {
+  local -n output=${1:-}
+  local section=${2:-}
+  [[ -n "$section" ]] || return $ERR_ARGS
+  local file=${3:-}
+  [[ -n "$file" ]] || return $ERR_ARGS
+  [[ -f "$file" ]] || return $ERR_FILE_NOT_FOUND
+
+  local found=false
+  while read -r line; do
+    # skip blank lines
+    [[ -n "$line" ]] || continue
+
+    # is this our target section? sections names are vhd's, so convert each end to unix to
+    # normalize the test (so vhd's can be referenced by any path format)
+    if [[ "$(path::to_unix "$(ini::is_section "$line")")" == "$(path::to_unix "$section")" ]]; then
+      # we found our target section
+      output['section']="$(string::trim "$section")"
+      found=true
+      continue
+    elif $found && ini::is_section "$line" >/dev/null; then
+      # we hit another section after finding ours. so we're done.
+      return 0
+    elif $found; then
+      # we're in a line in our target section. so assign key and value.
+      local key value
+      key=$(cut -d'=' -f 1 <<<"$line")
+      value=$(cut -d'=' -f 2 <<<"$line")
+      # shellcheck disable=SC2034
+      output[$(string::trim "$key")]="$(string::trim "$value")"
+      continue
+    fi
+  done <"$file"
+
+  # success if we found our section, otherwise error
+  if ! $found; then
+    return $ERR_INI_SECTION_NOT_FOUND
+  fi
+}
+
+################################################################################
+# ini::list_sections <inifile>
+#
+# Print name of each ini section in <inifile>
+################################################################################
+ini::list_sections() {
+  local file=${1:-}
+  [[ -n "$file" ]] || return $ERR_ARGS
+  [[ -f "$file" ]] || return $ERR_FILE_NOT_FOUND
+
+  local section
+  while read -r line; do
+    if section=$(ini::is_section "$line"); then
+      printf '%s\n' "$section"
+    fi
+  done <"$file"
+}
+
+################################################################################
+# fstype::is_fuse <fstype>
+#
+# Return success if <fstype> is a fuse filesystem (i.e. requires manual mount)
+################################################################################
+fstype::is_fuse() {
+  local fstype="${1:-}"
+  [[ -n "$fstype" ]] || return 1
+
+  local list=("exfat" "ntfs")
+  for x in "${list[@]}"; do
+    if [[ "$fstype" == "$x" ]]; then return 0; fi
+  done
+  return 1
+}
+
+################################################################################
+# fstype::is_win <fstype>
+#
+# Return success if <fstype> is a windows filesystem (i.e. requires a partition)
+################################################################################
+fstype::is_win() {
+  local fstype="${1:-}"
+  [[ -n "$fstype" ]] || return 1
+
+  local list=("exfat" "msdos" "ntfs" "vfat")
+  for x in "${list[@]}"; do
+    if [[ "$fstype" == "$x" ]]; then return 0; fi
+  done
+  return 1
+}
+
+################################################################################
 # Usage: sys::wsl <parameters>
 #
 # Executes `wsl.exe <parameters>` and returns smarter errors codes.
 ################################################################################
 sys::wsl() {
   # XXX: Due to WSL interop, output from `wsl.exe` contains a NULL between every character.
-  #PATH=$PATH:"/mnt/c/WINDOWS/system32" out="$(wsl.exe "$@" 2>/dev/null)"
-
   PATH=$PATH:"/mnt/c/WINDOWS/system32" out="$(wsl.exe "$@" 2>&1 | tr -d '\0')"
   local rc=$?
   logging::debug "wsl.exe $* returned $rc"
@@ -305,6 +432,17 @@ sys::wsl() {
 }
 
 ################################################################################
+# sys::mountpoint_from_device <device>
+#
+# Prints the mountpoint for <device>
+################################################################################
+sys::mountpoint_from_device() {
+  local device="${1:-}"
+  [[ -n "$device" ]] || return $ERR_ARGS
+  findmnt -n -f "$device" | cut -d' ' -f 1
+}
+
+################################################################################
 # Usage: sys::fstype <device>
 #
 # Print the underlying filesystem type of <device> or `none` on failure.
@@ -313,8 +451,14 @@ sys::fstype() {
   local device="${1:-}"
   [[ -n "$device" ]] || return 1
   if [[ "${device:0:5}" != "/dev/" ]]; then device="/dev/$device"; fi
-  sudo blkid --probe --usages filesystem --match-tag TYPE \
-    --output value "$device" 2>/dev/null || printf 'none\n'
+  [[ -b "$device" ]] || return 1
+
+  local fstype rc
+  fstype=$(sudo blkid --probe --usages filesystem --match-tag TYPE \
+    --output value "$device" 2>/dev/null)
+  rc=$?
+  if ((rc != 0)) || [[ -z "$fstype" ]]; then return 1; fi
+  printf '%s\n' "$fstype"
 }
 
 ################################################################################
@@ -329,30 +473,44 @@ sys::devices() {
 }
 
 ################################################################################
-# Usage: sys::mounts
-#
-# Prints device path of every mount, skipping any that don't start with `/dev/`
-################################################################################
-sys::mounts() { cut -d' ' -f 1 /proc/mounts | grep -E "^/dev/" | sort -u; }
-
-################################################################################
-# Usage: sys::mount <device> <mountpoint>
+# Usage: sys::mount <fstype> <device> <mountpoint> [uid] [gid]
 #
 # Mount <device> to <mountpoint> using `mount`.
 #
-# XXX: This is exclusively for NTFS filesystems. The WSL kernel doesn't ship
-# with NTFS support by default; WSL can only attach the device, not mount it.
+# XXX: This is exclusively for fuse filesystems. The WSL kernel doesn't ship
+# with NTFS/exfat support by default; WSL can only attach the device, not mount it.
 # So we rely on the FUSE userland driver and `mount` it ourselves .
 ################################################################################
 sys::mount() {
-  local device="${1:-}"
+  local fstype="${1:-}"
+  [[ -n "$fstype" ]] || return 1
+  local device="${2:-}"
   [[ -n "$device" ]] || return 1
-  local mountpoint="${2:-}"
+  local mountpoint="${3:-}"
   [[ -n "$mountpoint" ]] || return 1
+  local uid="${4:-}"
+  local gid="${5:-}"
+
   if [[ "${device:0:5}" != "/dev/" ]]; then device="/dev/$device"; fi
 
   mkdir -p "$mountpoint" || return 1
-  if ! out=$(sudo mount "$device" "$mountpoint"); then
+
+  args=()
+  if [[ "${fstype:-}" == "exfat" ]]; then
+    args+=("-t" "exfat-fuse")
+  elif [[ "${fstype:-}" == "ntfs" ]]; then
+    args+=("-t" "ntfs-3g")
+  fi
+
+  if [[ -n "${uid:-}" ]]; then
+    local opts="uid=$uid"
+    if [[ -n "${gid:-}" ]]; then opts="${opts},gid=$gid"; fi
+    args+=("-o" "$opts")
+  fi
+
+  args+=("$device" "$mountpoint")
+  logging::debug "sudo mount ${args[*]}"
+  if ! out=$(sudo mount "${args[@]}"); then
     logging::debug "$out"
     return 1
   fi
@@ -362,8 +520,6 @@ sys::mount() {
 # Usage: sys::unmount <device>
 #
 # Unmount <device> using `umount`.
-#
-# XXX: This is exclusively for NTFS filesystems (see sys::mount)
 ################################################################################
 sys::unmount() {
   local device="${1:-}"
@@ -372,13 +528,20 @@ sys::unmount() {
 }
 
 ################################################################################
-# Usage: sys::device_exists <device>
+# Usage: sys::is_mounted <mountpoint>
 #
-# Returns success if <device> exists. See `vhd::broken_mount`.
+# Return success if <mountpoint> is mounted
 ################################################################################
-sys::device_exists() {
-  local device="${1:-}"
-  [[ -n "$device" ]] && [[ -b "$device" ]]
+sys::is_mounted() {
+  local mountpoint
+  mountpoint="${1:-}"
+  [[ -n "$mountpoint" ]] || return 1
+
+  local device_name
+  device_name="$(findmnt -n -f "$mountpoint" | cut -d' ' -f 2 | cut -b6-)" || return 1
+  [[ -n "$device_name" ]] || return 1
+
+  printf '/dev/%s\n' "$device_name"
 }
 
 ################################################################################
@@ -387,54 +550,30 @@ sys::device_exists() {
 # Print supported filesystems, one per line.
 ################################################################################
 sys::filesystems() {
-  while read -ra vals; do
-    [[ "${vals[0]}" == "nodev" ]] && continue
-    if PATH=/sbin:/usr/sbin command -v "mkfs.${vals[0]}" >/dev/null 2>&1; then
-      printf '%s\n' "${vals[0]}"
-    else
-      logging::info "mkfs.${vals[0]} not found (package not installed?)"
-    fi
-  done < <(sort -d /proc/filesystems)
+  gen() {
+    while read -ra vals; do
+      [[ "${vals[0]}" == "nodev" ]] && continue
+      if PATH=/sbin:/usr/sbin command -v "mkfs.${vals[0]}" >/dev/null 2>&1; then
+        printf '%s\n' "${vals[0]}"
+      else
+        logging::info "mkfs.${vals[0]} not found (package not installed?)"
+      fi
+    done </proc/filesystems
 
-  # ntfs is an exception, because we're using a FUSE userland driver.
-  # TODO: Should look at other potential FUSE filesystems.
-  if PATH=/sbin:/usr/sbin command -v "mkfs.ntfs" >/dev/null 2>&1; then
-    printf 'ntfs\n'
-  else
-    logging::info "mkfs.ntfs not found (package not installed?)"
-  fi
-}
-
-################################################################################
-# Usage: sys::format <device> <fstype>
-#
-# Format <device> with `mkfs.$fstype`.
-#
-# If <fstype> is `ntfs`, a partition will be created on <device>, which will be
-# formatted instead. If we create it on the device, as every other filesystem,
-# Windows will be unable to read it.
-################################################################################
-sys::format() {
-  local device="${1:-}"
-  [[ -n "$device" ]] || return 1
-  local fstype="${2:-}"
-  [[ -n "$fstype" ]] || return 1
-
-  mkfsargs=("-t" "$fstype")
-  if [[ "$fstype" == "ntfs" ]]; then
-    mkfsargs+=("-f")
-    if ! out=$(printf 'n\np\n1\n\n\nt 1\n7\nw\n' | sudo fdisk "$device" 2>&1); then
-      logging::debug "$out"
-      return $ERR_GENERAL
-    fi
-    device="${device}1"
-  fi
-  mkfsargs+=("$device")
-
-  out=$(sudo mkfs "${mkfsargs[@]}" 2>&1) || {
-    logging::debug "$out"
-    return $ERR_GENERAL
+    # fuse drivers
+    for fs in ntfs exfat-fuse; do
+      if PATH=/sbin:/usr/sbin command -v "mount.$fs" >/dev/null 2>&1; then
+        if [[ "$fs" == "exfat-fuse" ]]; then
+          printf 'exfat\n'
+        else
+          printf '%s\n' "$fs"
+        fi
+      else
+        logging::info "mount.$fs not found (package not installed?)"
+      fi
+    done
   }
+  gen | sort -d
 }
 
 ################################################################################
@@ -443,16 +582,27 @@ sys::format() {
 # Check system requirements and log errors if we don't meet them.
 ################################################################################
 sys::requirements() {
-  requirements=('sudo' 'qemu-img' 'mkfs.ntfs')
+  requirements=('sudo' 'qemu-img')
   for requirement in "${requirements[@]}"; do
     if ! command -v "$requirement" >/dev/null 2>&1; then
       logging::error "Required program missing $requirement"
-      logging::error "Ubuntu/Debian: sudo apt install qemu-utils ntfs-3g"
-      logging::error "Redhat: sudo dnf install ntfsprogs"
+      logging::error "Please see Linux requirements in README.md"
       return 1
     fi
   done
   logging::debug "All requirements satisfied."
+}
+
+################################################################################
+# Usage: vhd::valid_ext <vhd>
+#
+# Returns success if <vhd> has a valid file extension i.e. ".vhdx"
+################################################################################
+vhd::valid_ext() {
+  local vhd="${1:-}"
+  [[ -n "$vhd" ]] || return 1
+  filename="$(basename "$(path::to_unix "$vhd")")"
+  [[ -n "$filename" ]] && [[ "${filename##*.}" == "vhdx" ]]
 }
 
 ################################################################################
@@ -489,7 +639,7 @@ vhd::name() {
 #
 # Example: `C:\foobar.vhdx` will have a mountpath of `/mnt/wsl/foobar`.
 ################################################################################
-vhd::mountpoint() { printf '/mnt/wsl/%s\n' "$(vhd::name "${1:-}")"; }
+vhd::mountpoint() { printf '%s/%s\n' "$MOUNT_ROOT" "$(vhd::name "${1:-}")"; }
 
 ################################################################################
 # Usage: vhd::exists <vhd>
@@ -516,13 +666,9 @@ vhd::is_mounted() {
 
   local mountpoint
   mountpoint="$(vhd::mountpoint "$vhd")" || return 1
+
   [[ -n "$mountpoint" ]] || return 1
-
-  local device_name
-  device_name="$(findmnt -n -f "$mountpoint" | cut -d' ' -f 2 | cut -b6-)" || return 1
-  [[ -n "$device_name" ]] || return 1
-
-  printf '/dev/%s\n' "$device_name"
+  sys::is_mounted "$mountpoint"
 }
 
 ################################################################################
@@ -537,48 +683,98 @@ vhd::chown() {
   [[ -n "$vhd" ]] || return 1
   local user="${2:-}"
   local group="${3:-}"
-  if [[ -n "$user" ]]; then sudo chown "$user" "$(vhd::mountpoint "$vhd")" || return 1; fi
-  if [[ -n "$group" ]]; then sudo chgrp "$group" "$(vhd::mountpoint "$vhd")" || return 1; fi
+
+  if [[ -n "$user" ]]; then
+    sudo chown "$user" "$(vhd::mountpoint "$vhd")" >/dev/null 2>&1 || return 1
+  fi
+
+  if [[ -n "$group" ]]; then
+    sudo chgrp "$group" "$(vhd::mountpoint "$vhd")" >/dev/null 2>&1 || return 1
+  fi
 }
 
 ################################################################################
-# Usage: vhd::mount <vhd>
+# vhd::mount [options] <vhd>
 #
-# Mounts <vhd>
+# options
+# -u <uid>
+# -g <gid>
+# -p <partition>
 ################################################################################
 vhd::mount() {
-  local vhd="${1:-}"
-  [[ -n "$vhd" ]] || return 1
-  local device pre post fstype
+  local OPTIND rc uid gid partition fstype
+  while getopts 'u:g:p:' flag; do
+    case "${flag}" in
+      u) uid="$OPTARG" ;;
+      g) gid="$OPTARG" ;;
+      p) partition="$OPTARG" ;;
+      *)
+        return $ERR_ARGS
+        ;;
+    esac
+  done
 
+  shift $((OPTIND - 1))
+  local vhd="${1:-}"
+  [[ -n "$vhd" ]] || return $ERR_ARGS
+
+  # does the backing file exist?
   vhd::exists "$vhd" || return $ERR_FILE_NOT_FOUND
+
+  # is it already mounted?
+  local device
   if device=$(vhd::is_mounted "$vhd"); then
     printf '%s\n' "$device"
     return $ERR_ALREADY_MOUNTED
   fi
 
-  readarray -t pre < <(sys::devices)
-  local rc=0
-  sys::wsl --mount --vhd --name "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")" || rc=$?
-  readarray -t post < <(sys::devices)
-  device="$(array::diff pre post | head -n 1)"
+  # it's not mounted, but might be attached.
+  # it's safe to unmount and reattach so we can determine the device.
+  vhd::unmount "$vhd" || :
+  device="$(vhd::attach "$vhd")" || return $?
 
-  # XXX: We tried to mount it, but it came back attached but not mounted.
-  # If there's a filesystem, try to mount it manually with `mount`.
-  if ((rc == ERR_ATTACHED_NOT_MOUNTED)); then
-    [[ -n "$device" ]] || return $rc
+  # if we didn't specify a partition, attempt to find one
+  if [[ -z "${partition:-}" ]]; then
+    logging::debug "$vhd: No partition specified, tried to find one"
+    for i in {1..128}; do
+      if [[ -b "${device}$i" ]]; then
+        partition="$i"
+      fi
+    done
+  fi
 
-    # XXX: If the device has partition 1, use it instead of the root device.
-    # NTFS is the only filesystem type to use/need a partition.
-    if [[ -b "${device}1" ]]; then device="${device}1"; fi
+  # if we still don't have a partition, assign it 0 (whole device).
+  # otherwise switch the device to use the partition.
+  if [[ -z "${partition:-}" ]]; then
+    logging::debug "$vhd: No partition found, default to 0 (whole device)"
+    partition=0
+  else
+    device="${device}${partition}"
+    logging::debug "$vhd: Found partition $partition, switching device to $device"
+  fi
 
-    # quit if can't find a valid filesystem
-    fstype=$(sys::fstype "$device") || return $ERR_GENERAL
-    if [[ "$fstype" == "none" ]]; then return $ERR_NOT_FORMATTED; fi
-    # do the manual mount
-    sys::mount "$device" "$(vhd::mountpoint "$vhd")" || return $ERR_GENERAL
-  elif ((rc != 0)); then
-    return $rc
+  # what's the filesystem type?
+  fstype=$(sys::fstype "$device")
+  logging::debug "device=$device, fstype=$fstype"
+  if [[ "${fstype:-}" == "none" ]] || [[ -z "${fstype:-}" ]]; then
+    return $ERR_NOT_FORMATTED
+  fi
+
+  if fstype::is_fuse "$fstype"; then
+    # this filesystem requires manually mounting
+    logging::debug "$vhd: $device is formatted with $fstype, fuse mount"
+    sys::mount "$fstype" "$device" "$(vhd::mountpoint "$vhd")" \
+      "${uid:-}" "${gid:-}" || return $?
+  else
+    # it's not a fuse filesystem
+    logging::debug "$vhd: $device is formatted with $fstype, mount with wsl.exe"
+    args=("--mount")
+    if ((partition != 0)); then args+=("--partition" "$partition"); fi
+    args+=("--vhd" "--name" "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")")
+    if [[ -n "${uid:-}" ]] && [[ "${fstype:-}" == "vfat" ]]; then
+      args+=("--options" "uid=$uid,gid=${gid:-$uid}")
+    fi
+    sys::wsl "${args[@]}" || return $?
   fi
 
   printf '%s\n' "$device"
@@ -612,22 +808,6 @@ vhd::attach() {
 }
 
 ################################################################################
-# Usage: vhd::broken_mount <vhd>
-#
-# Returns success if <vhd> has a broken mount. This means the device is mounted,
-# but doesn't exist. This can happen if `wsl.exe --unmount` detaches the device,
-# but fails to unmount it (which is the case for any device manually mounted
-# with `mount`, like NTFS).
-################################################################################
-vhd::broken_mount() {
-  local vhd="${1:-}"
-  [[ -n "$vhd" ]] || return 1
-  [[ -f "$(vhd::unixpath "$vhd")" ]] || return 1
-  device=$(vhd::is_mounted "$vhd") || return 1
-  if ! sys::device_exists "$device"; then printf '%s\n' "$device"; fi
-}
-
-################################################################################
 # Usage: vhd::mountpoints
 #
 # Prints the mountpoint of every mounted vhd.
@@ -636,40 +816,59 @@ vhd::mountpoints() {
   local mountpoint
   while read -ra arr; do
     mountpoint="${arr[1]}"
-    if [[ "${mountpoint:0:9}" == '/mnt/wsl/' ]]; then
+    if [[ "${mountpoint:0:9}" == "${MOUNT_ROOT}/" ]]; then
       printf '%s\n' "${arr[1]}"
     fi
   done </proc/mounts
 }
 
 ################################################################################
-# Usage: vhd::unmount <vhd>
+# Usage: vhd::unmount [vhd]
 #
-# Unmounts <vhd>.
+# Unmounts all vhd's, or just [vhd] if specified.
 ################################################################################
 vhd::unmount() {
   local vhd="${1:-}"
   local device
+  local fstype
 
-  # no vhd passed....so unmount everything.
+  # No vhd passed....so unmount everything.
   if [[ -z "$vhd" ]]; then
-    sys::wsl --unmount || :
     while read -r mountpoint; do
-      [[ -n "$mountpoint" ]] || continue
-      sys::unmount "$mountpoint" || :
+      device=$(sys::is_mounted "$mountpoint") || continue
+      fstype=$(sys::fstype "$device") || continue
+      if [[ "$fstype" == "none" ]]; then continue; fi
+      if fstype::is_fuse "$fstype"; then
+        sys::unmount "$mountpoint" || :
+      fi
     done < <(vhd::mountpoints)
+    sys::wsl --unmount || :
     return 0
   fi
 
   # vhd passed....so unmount it.
-  vhd="$(vhd::unixpath "$vhd")"
-  if [[ "${vhd#*.}" != "vhdx" ]]; then
-    logging::error "$(strerror "$ERR_BAD_FILE_EXT")"
-    return $ERR_BAD_FILE_EXT
+  vhd::valid_ext "$vhd" || return $ERR_BAD_FILE_EXT
+
+  # it's not mounted, but might be attached.
+  # we're safe to detach with wsl.exe and exit.
+  device=$(vhd::is_mounted "$vhd") || {
+    sys::wsl --unmount "$(vhd::winpath "$vhd")" || :
+    return 0
+  }
+
+  # it's mounted, so determine the filesystem
+  fstype=$(sys::fstype "$device") || :
+
+  # no filesystem. safe to detach.
+  if [[ "$fstype" == "none" ]]; then
+    sys::wsl --unmount "$(vhd::winpath "$vhd")" || :
+    return 0
   fi
 
+  if fstype::is_fuse "$fstype"; then
+    sys::unmount "$(vhd::mountpoint "$vhd")" || :
+  fi
   sys::wsl --unmount "$(vhd::winpath "$vhd")" || :
-  sys::unmount "$(vhd::mountpoint "$vhd")" || :
 }
 
 ################################################################################
@@ -683,106 +882,274 @@ vhd::create() {
   local size_in_mb="${2:-}"
   [[ -n "$size_in_mb" ]] || return 1
 
-  if [[ -f "$(vhd::unixpath "$vhd")" ]]; then return 1; fi
-  [[ "${vhd#*.}" == "vhdx" ]] || return $ERR_BAD_FILE_EXT
+  if [[ -f "$(vhd::unixpath "$vhd")" ]]; then
+    logging::debug "$vhd: already exists"
+    return 1
+  fi
+
+  vhd::valid_ext "$vhd" || return $ERR_BAD_FILE_EXT
 
   vhd::unmount "$vhd" || :
-  if ! out="$(qemu-img create -f vhdx "$(vhd::unixpath "$vhd")" "${size_in_mb}M" 2>&1)"; then
-    logging::debug "$out"
-    return 1
+
+  args=(
+    "create" "-f" "vhdx"
+    "$(vhd::unixpath "$vhd")"
+    "${size_in_mb}M"
+  )
+
+  out="$(qemu-img "${args[@]}" 2>&1)"
+  rc=$?
+  logging::debug "returned $rc: qemu-img ${args[*]}"
+  logging::debug "output: $out"
+  if ((rc != 0)); then
+    logging::error "qemu-img returned $rc"
+    logging::error "$out"
+    return $rc
   fi
 }
 
 ################################################################################
-# Usage: vhd::format <vhd> <fstype>
+# Usage: vhd::format [options] <vhd>
 #
-# Formats <vhd> with <fstype>. If the <vhd> is currently mounted, it will be
-# unmounted.
+# options
+# -t <fstype> (default: ext4)
+# -p <partition> (default: 0)
+#
+# Partition 0 means format the whole device.
 ################################################################################
 vhd::format() {
-  local vhd="${1:-}"
-  [[ -n "$vhd" ]] || return 1
-  local fstype="${2:-}"
-  [[ -n "$fstype" ]] || return 1
+  local OPTIND rc fstype partition vhd out
+  while getopts 't:p:' flag; do
+    case "${flag}" in
+      t) fstype="$OPTARG" ;;
+      p) partition="$OPTARG" ;;
+      *)
+        return $ERR_ARGS
+        ;;
+    esac
+  done
+
+  shift $((OPTIND - 1))
+  vhd="${1:-}"
+  [[ -n "$vhd" ]] || return $ERR_ARGS
+
+  # set default fstype
+  [[ -n "${fstype:-}" ]] || fstype="ext4"
+
+  logging::debug "$vhd: fstype=${fstype:-}, partition=${partition:-}"
 
   # unmount and attach
   vhd::unmount "$vhd" || :
-  device=$(vhd::attach "$vhd") || return $?
+  device=$(vhd::attach "$vhd") || {
+    rc=$?
+    logging::debug "vhd::attach failed with $(strerror $rc)"
+    return $rc
+  }
 
-  # format and unmount
-  sys::format "$device" "$fstype" || return $?
+  # partition wasn't specified, so choose sane default.
+  # in particular, filesystems need to be on a partition
+  # if they ever want to be read on Windows.
+  if [[ -z "${partition:-}" ]]; then
+    fstype::is_win "$fstype" && partition=1 || partition=0
+  fi
+
+  # if there's a partition, we need to create it with fdisk
+  if ((partition != 0)); then
+    out=$(printf 'n\np\n%s\n\n\nt 1\n7\nw\n' "$partition" | sudo fdisk "$device")
+    rc=$?
+    if ((rc != 0)); then
+      logging::debug "$vhd: fdisk $device failed with $rc"
+      return $ERR_GENERAL
+    fi
+    device="${device}${partition}"
+  fi
+
+  local mkfsargs=("-t" "$fstype")
+  if [[ "$fstype" == "ntfs" ]]; then
+    mkfsargs+=("-f")
+  fi
+  mkfsargs+=("$device")
+  out=$(sudo mkfs "${mkfsargs[@]}" 2>&1) || {
+    rc=$?
+    logging::debug "returned $rc: sudo mkfs ${mkfsargs[*]}"
+    logging::debug "$out"
+    if grep -q "too small" <<<"$out"; then
+      return $ERR_TOO_SMALL
+    else
+      return $ERR_GENERAL
+    fi
+  }
+
+  # unmount and exit
   vhd::unmount "$vhd" || :
 }
 
 ################################################################################
-# Usage: vhd::use <vhd> <fstype> <size_in_mb>
+# vhd::up <inifile> [vhd]
 #
-# Mounts <vhd>. If <vhd> doesn't exist, it will created and formatted first.
+# Mounts each VHD in <inifile> or the VHD specified by [vhd].
 ################################################################################
-vhd::use() {
-  local vhd="${1:-}"
-  [[ -n "$vhd" ]] || return 1
-  local fstype="${2:-}"
-  [[ -n "$fstype" ]] || return 1
-  local size_in_mb="${3:-}"
-  [[ -n "$size_in_mb" ]] || return 1
-  local rc
+vhd::up() {
+  handle_vhd() {
+    local -n data=$1
+    local vhd="${data["vhd"]:-}"
+    local fstype="${data["fstype"]:-}"
+    local size_in_mb="${data["size_in_mb"]:-}"
+    local uid="${data["uid"]:-}"
+    local gid="${data["gid"]:-}"
+    local partition="${data["partition"]:-}"
+    local rc
+    local device
 
-  logging::debug "$*"
-  device=$(vhd::mount "$vhd") || {
-    rc=$?
-    case $rc in
-      "$ERR_FILE_NOT_FOUND")
-        vhd::create "$vhd" "$size_in_mb" || return $?
-        vhd::format "$vhd" "$fstype" || return $?
-        vhd::mount "$vhd" >/dev/null || return $?
-        ;;
-      *) return $rc ;;
-    esac
+    local mountargs=()
+    if [[ -n "${uid:-}" ]]; then mountargs+=("-u" "$uid"); fi
+    if [[ -n "${gid:-}" ]]; then mountargs+=("-g" "$gid"); fi
+    if [[ -n "${partition:-}" ]]; then mountargs+=("-p" "$partition"); fi
+    mountargs+=("$vhd")
+
+    local formatargs=()
+    if [[ -n "${fstype:-}" ]]; then formatargs+=("-t" "$fstype"); fi
+    if [[ -n "${partition:-}" ]]; then formatargs+=("-p" "$partition"); fi
+    formatargs+=("$vhd")
+
+    device=$(vhd::mount "${mountargs[@]}") || {
+      rc=$?
+      case $rc in
+        "$ERR_ALREADY_MOUNTED")
+          # do nothing
+          ;;
+        "$ERR_FILE_NOT_FOUND")
+          vhd::create "$vhd" "$size_in_mb" || {
+            local rc2=$?
+            logging::error "vhd::create($vhd,$size_in_mb) failed with $(strerror $rc2)"
+            return $rc2
+          }
+
+          logging::info "$vhd: Created ${size_in_mb}M image."
+
+          vhd::format "${formatargs[@]}" || {
+            local rc2=$?
+            logging::error "vhd::format ${formatargs[*]} failed with $(strerror $rc2)"
+            return $rc2
+          }
+
+          logging::info "$vhd: Formatted with $fstype."
+
+          device=$(vhd::mount "${mountargs[@]}") || {
+            local rc2=$?
+            logging::error "vhd::mount ${mountargs[*]} failed with $(strerror $rc2)"
+            return $rc2
+          }
+          ;;
+        *) return $rc ;;
+      esac
+    }
+    vhd::chown "$vhd" "${uid:-}" "${gid:-}" || :
+    printf '%s\n' "$device"
   }
-  vhd::chown "$vhd" "${user:-}" "${group:-}" || :
-  printf '%s\n' "$device"
+
+  local config_file="${1:-}"
+  [[ -n "$config_file" ]] || return $ERR_ARGS
+  [[ -f "$config_file" ]] || {
+    logging::debug "$config_file: $(strerror "$ERR_FILE_NOT_FOUND")"
+    return $ERR_FILE_NOT_FOUND
+  }
+  local vhd="${2:-}"
+
+  # first grab globals.
+  declare -A global_data
+  ini::read_section global_data "global" "$config_file"
+
+  # build a list of section names
+  local vhds=()
+  if [[ -n "$vhd" ]]; then
+    vhds+=("$vhd")
+  else
+    readarray -t vhds < <(ini::list_sections "$config_file")
+  fi
+
+  # iterate each section.
+  for vhd in "${vhds[@]}"; do
+    [[ "$vhd" == "global" ]] && continue
+
+    # create new section_data and populate with global_data
+    declare -A section_data=()
+    section_data['vhd']="$vhd"
+    for key in "${!global_data[@]}"; do
+      section_data["$key"]="${global_data["$key"]}"
+    done
+
+    # now read the section values and add them to section_data
+    ini::read_section section_data "$vhd" "$config_file" || {
+      logging::debug "$config_file: Could not read ini section [$vhd]"
+      continue
+    }
+
+    # now do something with each session_data structure
+    local device
+    device="$(handle_vhd section_data)" || {
+      rc=$?
+      logging::debug "handle_vhd failed with $rc"
+      continue
+    }
+    logging::info "$vhd: Mounted $device -> $(sys::mountpoint_from_device "$device")"
+  done
+}
+
+################################################################################
+# vhd::down <inifile> [vhd]
+#
+# Unmount each VHD in <inifile> or the VHD specified by [vhd].
+################################################################################
+vhd::down() {
+  local config_file="${1:-}"
+  [[ -n "$config_file" ]] || return $ERR_ARGS
+  [[ -f "$config_file" ]] || {
+    logging::debug "$config_file: $(strerror "$ERR_FILE_NOT_FOUND")"
+    return $ERR_FILE_NOT_FOUND
+  }
+  local vhd="${2:-}"
+
+  local vhds=()
+  if [[ -n "$vhd" ]]; then
+    vhds+=("$vhd")
+  else
+    readarray -t vhds < <(ini::list_sections "$config_file")
+  fi
+
+  for vhd in "${vhds[@]}"; do
+    [[ "$vhd" == "global" ]] && continue
+    vhd::unmount "$vhd"
+    logging::info "$(path::to_win "$vhd"): Unmounted"
+  done
 }
 
 ################################################################################
 # cli functions.
 #################################################################################
 
-wsl-vhd-use() {
-  logging::debug "wsl-vhd use $*"
+wsl-vhd-up() {
+  logging::debug "wsl-vhd up $*"
   usage() {
     cat <<EOF
-Usage: $PROG_NAME use <VHD> <FS_TYPE> <SIZE_IN_MB> [...]
+Usage: $PROG_NAME up [OPTIONS] [VHD]
 
-Mounts VHD's, creating and formatting if necessary.
+Mount all VHD's in /etc/wsl-vhd.conf, or the [VHD] specified.
+If a VHD doesn't exist, it will be created and formatted.
 
 OPTIONS
 
--u  <USER>  Change owner of mountpoint to <USER> 
--u  <GROUP> Change group of mountpoint to <GROUP> 
--h          This message
-
-EXAMPLES
-
-$ $PROG_NAME use /mnt/c/wsl-vhd/code.vhdx btrfs 2000
-
-$ $PROG_NAME use \\
-	/mnt/c/wsl-vhd/1G-btrfs.vhdx btrfs 1000 \\
-	/mnt/c/wsl-vhd/2G-ext4.vhdx ext4 2000 \\
-	/mnt/c/wsl-vhd/3G-ntfs.vhdx ntfs 3000
+-f  <inifile>   Read from <inifile> (default: /etc/wsl-vhd.conf)
+-h              This message
 EOF
   }
 
-  local OPTIND
-  local user group fstype rc
+  local OPTIND rc
+  local inifile="/etc/wsl-vhd.conf"
 
-  if (($(id -u) != 0)); then user=$(id -un); fi
-  if (($(id -g) != 0)); then group=$(id -gn); fi
-
-  while getopts 'u:g:h' flag; do
+  while getopts 'f:h' flag; do
     case "${flag}" in
-      u) user="$OPTARG" ;;
-      g) group="$OPTARG" ;;
+      f) inifile="$OPTARG" ;;
       *)
         usage
         return 1
@@ -790,45 +1157,51 @@ EOF
     esac
   done
   shift $((OPTIND - 1))
+  local vhd="${1:-}"
 
-  if (($# == 0 || $# % 3 != 0)); then
-    usage
-    return 1
-  fi
+  local rc
+  vhd::up "${inifile}" "${vhd:-}" || {
+    rc=$?
+    logging::error "$inifile: $(strerror $rc)"
+    return $rc
+  }
+}
 
-  local lasterr=0
-  local lastvhd=
-  while (($# >= 3)); do
-    local vhd="${1:-}"
-    [[ -n "$vhd" ]] || {
-      usage
-      return 1
-    }
+wsl-vhd-down() {
+  logging::debug "wsl-vhd down $*"
+  usage() {
+    cat <<EOF
+Usage: $PROG_NAME down [OPTIONS] [name]
 
-    local fstype="${2:-}"
-    [[ -n "$fstype" ]] || {
-      usage
-      return 1
-    }
+Unmount all VHD's in /etc/wsl-vhd.conf, or the VHD specified by [name].
 
-    local size_in_mb="${3:-}"
-    [[ -n "$size_in_mb" ]] || {
-      usage
-      return 1
-    }
+OPTIONS
 
-    shift 3
+-f  <inifile>   Read from <inifile> (default: /etc/wsl-vhd.conf)
+-h              This message
+EOF
+  }
 
-    vhd::use "$vhd" "$fstype" "$size_in_mb" >/dev/null || {
-      rc=$?
-      if ((rc != 0 && rc != ERR_ALREADY_MOUNTED)); then
-        logging::error "$vhd: $(strerror $rc)"
-        return $lasterr
-      else
-        logging::info "$vhd: Succesfully mounted."
-      fi
-    }
+  local OPTIND rc
+  local inifile="/etc/wsl-vhd.conf"
+
+  while getopts 'f:h' flag; do
+    case "${flag}" in
+      f) inifile="$OPTARG" ;;
+      *)
+        usage
+        return 1
+        ;;
+    esac
   done
+  shift $((OPTIND - 1))
+  local name="${1:-}"
+
+  vhd::down "${inifile}" "${name:-}" || {
+    rc=$?
+    logging::error "$inifile: $(strerror $rc)"
+    return $rc
+  }
 }
 
 wsl-vhd-create() {
@@ -845,7 +1218,7 @@ $ $PROG_NAME create /mnt/c/code.vhdx
 EOF
   }
 
-  local OPTIND
+  local OPTIND rc
   while getopts 'h' flag "$@"; do
     case "${flag}" in
       *)
@@ -887,7 +1260,7 @@ Supported filesystems: $(sys::filesystems | tr '\n' ' ')
 EOF
   }
 
-  local OPTIND
+  local OPTIND rc
   while getopts 'h' flag "$@"; do
     case "${flag}" in
       *)
@@ -921,20 +1294,34 @@ wsl-vhd-mount() {
   logging::debug "wsl-vhd mount $*"
   usage() {
     cat <<EOF
-Usage: $PROG_NAME mount <VHD>
+Usage: $PROG_NAME mount [OPTIONS] <VHD>
 
 Mounts the disk image located at <VHD> and prints the mountpoint on success.
+
+OPTIONS
+
+-u  <UID>         Change ownership of mountpoint to <uid>
+-g  <GID>         Change ownership of mountpoint to <gid>
+-p  <PARTITION>   Mount the specified <PARTITION> on <VHD>
 
 EXAMPLES
 
 $ $PROG_NAME mount /mnt/c/code.vhdx
-/mnt/wsl/code
 EOF
   }
 
-  local OPTIND
-  while getopts 'h' flag "$@"; do
+  local OPTIND rc uid gid partition
+  while getopts 'u:g:p:h' flag "$@"; do
     case "${flag}" in
+      u)
+        uid="${OPTARG}"
+        ;;
+      g)
+        gid="${OPTARG}"
+        ;;
+      p)
+        partition="${OPTARG}"
+        ;;
       *)
         usage
         return 1
@@ -951,14 +1338,21 @@ EOF
     return 1
   fi
 
-  local rc
-  device="$(vhd::mount "$vhd")" || {
-    rc=$?
-    logging::error "$vhd: $(strerror $rc)"
-    return $rc
-  }
+  local mountargs=()
+  if [[ -n "${uid:-}" ]]; then mountargs+=("-u" "$uid"); fi
+  if [[ -n "${gid:-}" ]]; then mountargs+=("-g" "$gid"); fi
+  if [[ -n "${partition:-}" ]]; then mountargs+=("-p" "$partition"); fi
+  mountargs+=("$vhd")
 
-  logging::info "$vhd: Mounted at $device"
+  local rc
+  device="$(vhd::mount "${mountargs[@]}")" || {
+    rc=$?
+    if ((rc != ERR_ALREADY_MOUNTED)); then
+      logging::error "$vhd: $(strerror $rc)"
+      return $rc
+    fi
+  }
+  logging::info "Mounted to $(vhd::mountpoint "$vhd") using device $device"
 }
 
 wsl-vhd-attach() {
@@ -975,7 +1369,7 @@ $ $PROG_NAME attach 'C:\\mything.vhdx'
 EOF
   }
 
-  local OPTIND
+  local OPTIND rc
   while getopts 'h' flag "$@"; do
     case "${flag}" in
       *)
@@ -1002,6 +1396,7 @@ EOF
   }
 
   logging::info "$vhd: Attached to $device"
+  printf '%s\n' "$device"
 }
 
 wsl-vhd-unmount() {
@@ -1013,7 +1408,7 @@ Unmount <VHD> or all VHD's
 EOF
   }
 
-  local OPTIND
+  local OPTIND rc
   while getopts 'h' flag "$@"; do
     case "${flag}" in
       *)
@@ -1051,22 +1446,23 @@ GLOBAL OPTIONS
 
 COMMANDS
 
-  use           Mount VHD's, creating and formatting if necessary
+  up            Mount VHD's in \`/etc/wsl-vhd.conf\`, creating and formatting if necessary
+  down          Unmount VHD's in \`/etc/wsl-vhd.conf\`
   create        Create new VHD without formatting
   attach        Attach VHD without mounting (aka bare mount)
   mount         Mount VHD
   format        Format VHD
   unmount       Unmount VHD (or all by default)
-  compact       Compact VHD (aka sparsify)
 
 Pass \`-h\` to any command to view usage e.g. \`$PROG_NAME use -h\`
 EOF
   }
 
-  local OPTIND
-  while getopts 'hv' flag; do
+  local OPTIND rc
+  while getopts 'hqv' flag; do
     case "${flag}" in
-      v) ((LOG_LEVEL -= 10)) || : ;;
+      v) ((LOG_LEVEL -= 10)) ;;
+      q) ((LOG_LEVEL += 10)) ;;
       *)
         usage
         return 1
@@ -1092,7 +1488,8 @@ EOF
   fi
 
   case "$cmd" in
-    use) wsl-vhd-use "$@" ;;
+    up) wsl-vhd-up "$@" ;;
+    down) wsl-vhd-down "$@" ;;
     create) wsl-vhd-create "$@" ;;
     mount) wsl-vhd-mount "$@" ;;
     attach) wsl-vhd-attach "$@" ;;
