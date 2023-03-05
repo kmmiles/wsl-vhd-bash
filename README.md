@@ -70,27 +70,45 @@ Now run `wsl-vhd up`.
 
 See `./etc/wsl-vhd.conf.test` for additional options.
 
-## Run on boot
+## Automounting VHD's in WSL
 
-> When run on boot, `wsl-vhd` is executed as `root`. 
+There are two options: the `[boot]` directive in `wsl.conf` or execute with `wsl.exe`. 
+
+### Automount with `wsl.conf`
+
+> Note that commands executed in `[boot]` might finish before *or after* your shell loads. 
+> That can be an issue if you're trying to mount `/home/` or something similar.
 
 Add a line like this to `/etc/wsl.conf`:
-
 ```
 [boot]
 command = wsl-vhd up > /tmp/wsl-vhd.log 2>&1
 ```
 
-If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, replace `-v` with `-vv` (or `-vvv` for the verbosiest among us).
+If something goes wrong, a log will stored at `/tmp/wsl-vhd.log`. If you need more info, use `wsl-vhd -v` (or `-vv` for a full trace).
 
-# Additional usage
+### Automount with `wsl.exe`
 
-Run `wsl-vhd -h` to view additional commands. 
+While slightly hackier, with this solution your shell loads *after* calling `wsl-vhd`.
+
+From Windows Terminal (or your preferred), modify the command-line for the WSL distribution.
+
+It will look something like:
+
+```bash
+wsl.exe -d Ubuntu
+```
+
+Change it to something like:
+
+```bash
+wsl.exe -d Ubuntu --exec /bin/bash -c "wsl-vhd up; exec /bin/bash --login"
+```
 
 # Uninstall
 
 ```bash
-sudo rm -f $(which wsl-vhd) /etc/wsl-vhd.conf
+sudo rm -f $(which wsl-vhd)
 ```
 
 # Changelog
