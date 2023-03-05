@@ -3,7 +3,7 @@
 Create, manage and mount VHD's in WSL. 
 
 With this script you can store your data (like your code) in a virtual disk, using the filesystem of your choice (ext4, btrfs, ntfs, exfat, etc).
-This disk can be automatically created, formatted and mounted when launching WSL, and the mount is shared between all distributions.
+This disk can be automatically created, formatted and mounted when launching WSL. As a bonus the mount is automatically shared between all WSL distributions.
 
 The blogpost which inspired this project: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
 
