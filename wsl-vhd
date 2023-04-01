@@ -35,11 +35,11 @@ ERR_TOO_SMALL=13
 ERR_INI_SECTION_NOT_FOUND=13
 
 ################################################################################
-# Usage: strerror <errno>
+# Usage: str::error <errno>
 #
 # Print string describing <errno>
 ################################################################################
-strerror() {
+str::error() {
   case "${1:-$ERR_GENERAL}" in
     "$ERR_SUCCESS") printf "Success" ;;
     "$ERR_GENERAL") printf 'General error' ;;
@@ -59,15 +59,15 @@ strerror() {
 }
 
 ################################################################################
-# Usage: string::trim <string>
+# Usage: str::trim <string>
 #
 # Prints string with leading/trailing whitespace removed
 ################################################################################
-string::trim() {
+str::trim() {
   local str="$*"
   str="${str#"${str%%[![:space:]]*}"}"
-  var="${str%"${str##*[![:space:]]}"}"
-  printf '%s' "$var"
+  str="${str%"${str##*[![:space:]]}"}"
+  printf '%s' "$str"
 }
 
 ################################################################################
@@ -76,32 +76,32 @@ string::trim() {
 # Each prints all passed parameters as a string to `stderr`, if the global
 # $LOG_LEVEL is set accordingly. See `main` for how $LOG_LEVEL is adjusted.
 ################################################################################
-logging::debug() {
+log::debug() {
   if ((LOG_LEVEL <= LOG_LEVEL_DEBUG)); then
     printf >&2 'DEBUG: [%s] %s\n' "${FUNCNAME[1]}" "$*"
   fi
 }
 
-logging::info() {
+log::info() {
   if ((LOG_LEVEL <= LOG_LEVEL_INFO)); then
     #printf >&2 'INFO: [%s] %s\n' "${FUNCNAME[1]}" "$*"
     printf >&2 '%s\n' "$*"
   fi
 }
 
-logging::warning() {
+log::warning() {
   if ((LOG_LEVEL <= LOG_LEVEL_WARN)); then
     printf >&2 'WARNING: [%s] %s\n' "${FUNCNAME[1]}" "$*"
   fi
 }
 
-logging::error() {
+log::error() {
   if ((LOG_LEVEL <= LOG_LEVEL_ERROR)); then
     printf >&2 'ERROR: [%s] %s\n' "${FUNCNAME[1]}" "$*"
   fi
 }
 
-logging::critical() {
+log::critical() {
   if ((LOG_LEVEL <= LOG_LEVEL_CRITICAL)); then
     printf >&2 'CRITICAL: [%s] %s\n' "${FUNCNAME[1]}" "$*"
   fi
@@ -328,7 +328,7 @@ ini::read_section() {
     # normalize the test (so vhd's can be referenced by any path format)
     if [[ "$(path::to_unix "$(ini::is_section "$line")")" == "$(path::to_unix "$section")" ]]; then
       # we found our target section
-      output['section']="$(string::trim "$section")"
+      output['section']="$(str::trim "$section")"
       found=true
       continue
     elif $found && ini::is_section "$line" >/dev/null; then
@@ -340,7 +340,7 @@ ini::read_section() {
       key=$(cut -d'=' -f 1 <<<"$line")
       value=$(cut -d'=' -f 2 <<<"$line")
       # shellcheck disable=SC2034
-      output[$(string::trim "$key")]="$(string::trim "$value")"
+      output[$(str::trim "$key")]="$(str::trim "$value")"
       continue
     fi
   done <"$file"
@@ -410,8 +410,8 @@ sys::wsl() {
   # XXX: Due to WSL interop, output from `wsl.exe` contains a NULL between every character.
   PATH=$PATH:"/mnt/c/WINDOWS/system32" out="$(wsl.exe "$@" 2>&1 | tr -d '\0')"
   local rc=$?
-  logging::debug "wsl.exe $* returned $rc"
-  logging::debug "$out"
+  log::debug "wsl.exe $* returned $rc"
+  log::debug "$out"
   if ((rc != 0)); then
     if grep -q "WSL_E_USER_VHD_ALREADY_ATTACHED" <<<"$out"; then
       return $ERR_ALREADY_ATTACHED
@@ -509,9 +509,9 @@ sys::mount() {
   fi
 
   args+=("$device" "$mountpoint")
-  logging::debug "sudo mount ${args[*]}"
+  log::debug "sudo mount ${args[*]}"
   if ! out=$(sudo mount "${args[@]}"); then
-    logging::debug "$out"
+    log::debug "$out"
     return 1
   fi
 }
@@ -556,7 +556,7 @@ sys::filesystems() {
       if PATH=/sbin:/usr/sbin command -v "mkfs.${vals[0]}" >/dev/null 2>&1; then
         printf '%s\n' "${vals[0]}"
       else
-        logging::info "mkfs.${vals[0]} not found (package not installed?)"
+        log::info "mkfs.${vals[0]} not found (package not installed?)"
       fi
     done </proc/filesystems
 
@@ -569,7 +569,7 @@ sys::filesystems() {
           printf '%s\n' "$fs"
         fi
       else
-        logging::info "mount.$fs not found (package not installed?)"
+        log::info "mount.$fs not found (package not installed?)"
       fi
     done
   }
@@ -582,15 +582,15 @@ sys::filesystems() {
 # Check system requirements and log errors if we don't meet them.
 ################################################################################
 sys::requirements() {
-  requirements=('sudo' 'qemu-img')
+  requirements=('sudo' 'qemu-img' 'lsblk' 'findmnt')
   for requirement in "${requirements[@]}"; do
     if ! command -v "$requirement" >/dev/null 2>&1; then
-      logging::error "Required program missing $requirement"
-      logging::error "Please see Linux requirements in README.md"
+      log::error "Required program missing $requirement"
+      log::error "Please see Linux requirements in README.md"
       return 1
     fi
   done
-  logging::debug "All requirements satisfied."
+  log::debug "All requirements satisfied."
 }
 
 ################################################################################
@@ -650,7 +650,7 @@ vhd::exists() {
   local path="${1:-}"
   [[ -n "$path" ]] || return 1
   if [[ ! -f "$(vhd::unixpath "$path")" ]]; then
-    logging::debug "$path: $(strerror $ERR_FILE_NOT_FOUND)"
+    log::debug "$path: $(str::error $ERR_FILE_NOT_FOUND)"
     return 1
   fi
 }
@@ -735,10 +735,11 @@ vhd::mount() {
 
   # if we didn't specify a partition, attempt to find one
   if [[ -z "${partition:-}" ]]; then
-    logging::debug "$vhd: No partition specified, tried to find one"
+    log::debug "$vhd: No partition specified, probing..."
     for i in {1..128}; do
       if [[ -b "${device}$i" ]]; then
         partition="$i"
+        break
       fi
     done
   fi
@@ -746,28 +747,29 @@ vhd::mount() {
   # if we still don't have a partition, assign it 0 (whole device).
   # otherwise switch the device to use the partition.
   if [[ -z "${partition:-}" ]]; then
-    logging::debug "$vhd: No partition found, default to 0 (whole device)"
+    log::debug "$vhd: No partition found, default to 0 (whole device)"
     partition=0
   else
     device="${device}${partition}"
-    logging::debug "$vhd: Found partition $partition, switching device to $device"
+    log::debug "$vhd: Found partition $partition, switching device to $device"
   fi
 
   # what's the filesystem type?
+  log::debug "$vhd: probing filesystem on $device"
   fstype=$(sys::fstype "$device")
-  logging::debug "device=$device, fstype=$fstype"
   if [[ "${fstype:-}" == "none" ]] || [[ -z "${fstype:-}" ]]; then
     return $ERR_NOT_FORMATTED
   fi
 
+  log::debug "$vhd: $fstype found on $device"
   if fstype::is_fuse "$fstype"; then
     # this filesystem requires manually mounting
-    logging::debug "$vhd: $device is formatted with $fstype, fuse mount"
+    log::debug "$vhd: $device is formatted with $fstype, fuse mount"
     sys::mount "$fstype" "$device" "$(vhd::mountpoint "$vhd")" \
       "${uid:-}" "${gid:-}" || return $?
   else
     # it's not a fuse filesystem
-    logging::debug "$vhd: $device is formatted with $fstype, mount with wsl.exe"
+    log::debug "$vhd: $device is formatted with $fstype, mount with wsl.exe"
     args=("--mount")
     if ((partition != 0)); then args+=("--partition" "$partition"); fi
     args+=("--vhd" "--name" "$(vhd::name "$vhd")" "$(vhd::winpath "$vhd")")
@@ -846,7 +848,6 @@ vhd::unmount() {
     return 0
   fi
 
-  # vhd passed....so unmount it.
   vhd::valid_ext "$vhd" || return $ERR_BAD_FILE_EXT
 
   # it's not mounted, but might be attached.
@@ -883,7 +884,7 @@ vhd::create() {
   [[ -n "$size_in_mb" ]] || return 1
 
   if [[ -f "$(vhd::unixpath "$vhd")" ]]; then
-    logging::debug "$vhd: already exists"
+    log::debug "$vhd: already exists"
     return 1
   fi
 
@@ -899,11 +900,11 @@ vhd::create() {
 
   out="$(qemu-img "${args[@]}" 2>&1)"
   rc=$?
-  logging::debug "returned $rc: qemu-img ${args[*]}"
-  logging::debug "output: $out"
+  log::debug "returned $rc: qemu-img ${args[*]}"
+  log::debug "output: $out"
   if ((rc != 0)); then
-    logging::error "qemu-img returned $rc"
-    logging::error "$out"
+    log::error "qemu-img returned $rc"
+    log::error "$out"
     return $rc
   fi
 }
@@ -936,13 +937,13 @@ vhd::format() {
   # set default fstype
   [[ -n "${fstype:-}" ]] || fstype="ext4"
 
-  logging::debug "$vhd: fstype=${fstype:-}, partition=${partition:-}"
+  log::debug "$vhd: fstype=${fstype:-}, partition=${partition:-}"
 
   # unmount and attach
   vhd::unmount "$vhd" || :
   device=$(vhd::attach "$vhd") || {
     rc=$?
-    logging::debug "vhd::attach failed with $(strerror $rc)"
+    log::debug "vhd::attach failed with $(str::error $rc)"
     return $rc
   }
 
@@ -953,12 +954,12 @@ vhd::format() {
     fstype::is_win "$fstype" && partition=1 || partition=0
   fi
 
-  # if there's a partition, we need to create it with fdisk
   if ((partition != 0)); then
+    # create the partition with fdisk
     out=$(printf 'n\np\n%s\n\n\nt 1\n7\nw\n' "$partition" | sudo fdisk "$device")
     rc=$?
     if ((rc != 0)); then
-      logging::debug "$vhd: fdisk $device failed with $rc"
+      log::debug "$vhd: fdisk $device failed with $rc"
       return $ERR_GENERAL
     fi
     device="${device}${partition}"
@@ -971,8 +972,8 @@ vhd::format() {
   mkfsargs+=("$device")
   out=$(sudo mkfs "${mkfsargs[@]}" 2>&1) || {
     rc=$?
-    logging::debug "returned $rc: sudo mkfs ${mkfsargs[*]}"
-    logging::debug "$out"
+    log::debug "returned $rc: sudo mkfs ${mkfsargs[*]}"
+    log::debug "$out"
     if grep -q "too small" <<<"$out"; then
       return $ERR_TOO_SMALL
     else
@@ -995,8 +996,8 @@ vhd::up() {
     local vhd="${data["vhd"]:-}"
     local fstype="${data["fstype"]:-}"
     local size_in_mb="${data["size_in_mb"]:-}"
-    local uid="${data["uid"]:-}"
-    local gid="${data["gid"]:-}"
+    local uid="${data["uid"]:-1000}"
+    local gid="${data["gid"]:-1000}"
     local partition="${data["partition"]:-}"
     local rc
     local device
@@ -1013,31 +1014,31 @@ vhd::up() {
     formatargs+=("$vhd")
 
     device=$(vhd::mount "${mountargs[@]}") || {
-      rc=$?
+      local -r rc=$?
       case $rc in
         "$ERR_ALREADY_MOUNTED")
           # do nothing
           ;;
         "$ERR_FILE_NOT_FOUND")
           vhd::create "$vhd" "$size_in_mb" || {
-            local rc2=$?
-            logging::error "vhd::create($vhd,$size_in_mb) failed with $(strerror $rc2)"
+            local -r rc2=$?
+            log::error "vhd::create($vhd,$size_in_mb) failed with $(str::error $rc2)"
             return $rc2
           }
 
-          logging::info "$vhd: Created ${size_in_mb}M image."
+          log::info "$vhd: Created ${size_in_mb}M image."
 
           vhd::format "${formatargs[@]}" || {
-            local rc2=$?
-            logging::error "vhd::format ${formatargs[*]} failed with $(strerror $rc2)"
+            local -r rc2=$?
+            log::error "vhd::format ${formatargs[*]} failed with $(str::error $rc2)"
             return $rc2
           }
 
-          logging::info "$vhd: Formatted with $fstype."
+          log::info "$vhd: Formatted with $fstype."
 
           device=$(vhd::mount "${mountargs[@]}") || {
-            local rc2=$?
-            logging::error "vhd::mount ${mountargs[*]} failed with $(strerror $rc2)"
+            local -r rc2=$?
+            log::error "vhd::mount ${mountargs[*]} failed with $(str::error $rc2)"
             return $rc2
           }
           ;;
@@ -1051,7 +1052,7 @@ vhd::up() {
   local config_file="${1:-}"
   [[ -n "$config_file" ]] || return $ERR_ARGS
   [[ -f "$config_file" ]] || {
-    logging::debug "$config_file: $(strerror "$ERR_FILE_NOT_FOUND")"
+    log::debug "$config_file: $(str::error "$ERR_FILE_NOT_FOUND")"
     return $ERR_FILE_NOT_FOUND
   }
   local vhd="${2:-}"
@@ -1076,23 +1077,23 @@ vhd::up() {
     declare -A section_data=()
     section_data['vhd']="$vhd"
     for key in "${!global_data[@]}"; do
+      # shellcheck disable=SC2034
       section_data["$key"]="${global_data["$key"]}"
     done
 
     # now read the section values and add them to section_data
     ini::read_section section_data "$vhd" "$config_file" || {
-      logging::debug "$config_file: Could not read ini section [$vhd]"
+      log::debug "$config_file: Could not read ini section [$vhd]"
       continue
     }
 
     # now do something with each session_data structure
     local device
     device="$(handle_vhd section_data)" || {
-      rc=$?
-      logging::debug "handle_vhd failed with $rc"
+      log::error "$vhd: handle_vhd failed with $?"
       continue
     }
-    logging::info "$vhd: Mounted $device -> $(sys::mountpoint_from_device "$device")"
+    log::info "$vhd: Mounted $device -> $(sys::mountpoint_from_device "$device")"
   done
 }
 
@@ -1105,7 +1106,7 @@ vhd::down() {
   local config_file="${1:-}"
   [[ -n "$config_file" ]] || return $ERR_ARGS
   [[ -f "$config_file" ]] || {
-    logging::debug "$config_file: $(strerror "$ERR_FILE_NOT_FOUND")"
+    log::debug "$config_file: $(str::error "$ERR_FILE_NOT_FOUND")"
     return $ERR_FILE_NOT_FOUND
   }
   local vhd="${2:-}"
@@ -1120,7 +1121,7 @@ vhd::down() {
   for vhd in "${vhds[@]}"; do
     [[ "$vhd" == "global" ]] && continue
     vhd::unmount "$vhd"
-    logging::info "$(path::to_win "$vhd"): Unmounted"
+    log::info "$(path::to_win "$vhd"): Unmounted"
   done
 }
 
@@ -1129,7 +1130,7 @@ vhd::down() {
 #################################################################################
 
 wsl-vhd-up() {
-  logging::debug "wsl-vhd up $*"
+  log::debug "wsl-vhd up $*"
   usage() {
     cat <<EOF
 Usage: $PROG_NAME up [OPTIONS] [VHD]
@@ -1157,18 +1158,18 @@ EOF
     esac
   done
   shift $((OPTIND - 1))
-  local vhd="${1:-}"
+  local -r vhd="${1:-}"
 
   local rc
   vhd::up "${inifile}" "${vhd:-}" || {
     rc=$?
-    logging::error "$inifile: $(strerror $rc)"
+    log::error "$inifile: $(str::error $rc)"
     return $rc
   }
 }
 
 wsl-vhd-down() {
-  logging::debug "wsl-vhd down $*"
+  log::debug "wsl-vhd down $*"
   usage() {
     cat <<EOF
 Usage: $PROG_NAME down [OPTIONS] [name]
@@ -1199,7 +1200,7 @@ EOF
 
   vhd::down "${inifile}" "${name:-}" || {
     rc=$?
-    logging::error "$inifile: $(strerror $rc)"
+    log::error "$inifile: $(str::error $rc)"
     return $rc
   }
 }
@@ -1241,15 +1242,15 @@ EOF
   local rc
   vhd::create "$vhd" "$size_in_mb" || {
     rc=$?
-    logging::error "$vhd: Failed to create ${size_in_mb} image: $(strerror $rc)"
+    log::error "$vhd: Failed to create ${size_in_mb} image: $(str::error $rc)"
     return $rc
   }
 
-  logging::info "$vhd: Successfully created ${size_in_mb}M image"
+  log::info "$vhd: Successfully created ${size_in_mb}M image"
 }
 
 wsl-vhd-format() {
-  logging::debug "wsl-vhd format $*"
+  log::debug "wsl-vhd format $*"
   usage() {
     cat <<EOF
 Usage: $PROG_NAME format <DEVICE> <FS>
@@ -1283,15 +1284,15 @@ EOF
   local rc
   vhd::format "$vhd" >/dev/null || {
     rc=$?
-    logging::error "$vhd: $(strerror $rc)"
+    log::error "$vhd: $(str::error $rc)"
     return $rc
   }
 
-  logging::info "$vhd: Formatted as $fstype"
+  log::info "$vhd: Formatted as $fstype"
 }
 
 wsl-vhd-mount() {
-  logging::debug "wsl-vhd mount $*"
+  log::debug "wsl-vhd mount $*"
   usage() {
     cat <<EOF
 Usage: $PROG_NAME mount [OPTIONS] <VHD>
@@ -1348,11 +1349,11 @@ EOF
   device="$(vhd::mount "${mountargs[@]}")" || {
     rc=$?
     if ((rc != ERR_ALREADY_MOUNTED)); then
-      logging::error "$vhd: $(strerror $rc)"
+      log::error "$vhd: $(str::error $rc)"
       return $rc
     fi
   }
-  logging::info "Mounted to $(vhd::mountpoint "$vhd") using device $device"
+  log::info "Mounted to $(vhd::mountpoint "$vhd") using device $device"
 }
 
 wsl-vhd-attach() {
@@ -1391,11 +1392,11 @@ EOF
   local rc
   device="$(vhd::attach "$vhd")" || {
     rc=$?
-    logging::error "$vhd: $(strerror $rc)"
+    log::error "$vhd: $(str::error $rc)"
     return $rc
   }
 
-  logging::info "$vhd: Attached to $device"
+  log::info "$vhd: Attached to $device"
   printf '%s\n' "$device"
 }
 
@@ -1423,7 +1424,7 @@ EOF
   shift 1
 
   if ! vhd::unmount "$vhd"; then
-    logging::info "${vhd:-All}: $(strerror "$ERR_UNMOUNT")"
+    log::info "${vhd:-All}: $(str::error "$ERR_UNMOUNT")"
     return $ERR_UNMOUNT
   fi
 }
@@ -1442,12 +1443,13 @@ VHD management for WSL.
 GLOBAL OPTIONS
 
   -h  This message
-  -v  Increase verbosity. \`-vv\` for debug, \`-vvv\` for extended debug.
+  -v  Increase verbosity. \`-v\` for debug, \`-vv\` for trace.
 
 COMMANDS
 
   up            Mount VHD's in \`/etc/wsl-vhd.conf\`, creating and formatting if necessary
   down          Unmount VHD's in \`/etc/wsl-vhd.conf\`
+
   create        Create new VHD without formatting
   attach        Attach VHD without mounting (aka bare mount)
   mount         Mount VHD
@@ -1483,7 +1485,7 @@ EOF
   shift 1
 
   if [[ "$cmd" != "requirements" ]] && ! sys::requirements; then
-    logging::critical "Missing requirements"
+    log::critical "Missing requirements"
     return 1
   fi
 
@@ -1506,4 +1508,4 @@ EOF
   esac
 }
 
-main "$@"
+[[ "${BASH_SOURCE[0]:-}" != "$0" ]] || main "$@"

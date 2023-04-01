@@ -1,21 +1,40 @@
 #!/bin/bash
+#
+# Tests `wsl-vhd up` and `wsl-vhd down` using test config. 
+#
+# 1. unmount everything from system (in /mnt/wsl)
+# 2. mount vhds from test config
+# 3. try to touch a file in each vhd mountpoint
+# 4. unmounts vhds from test config
+# 5. mount vhds from system (/etc/wsl-vhd.conf)
+
+set -uo pipefail
 
 main() {
-  local configfile="./etc/wsl-vhd.conf.test"
-  #local name="dosbox"
+  local -r configfile="./etc/wsl-vhd.conf.test"
+  local rc=0
+  #local vhd_name="dosbox"
+
 
   wsl-vhd unmount || :
-  rm -f /mnt/c/wsl-vhd/*.vhdx || :
-  wsl-vhd up -f "$configfile" "${name:-}"
+  wsl-vhd up -f "$configfile" "${vhd_name:-}" || return 1
+
   find /mnt/wsl -maxdepth 1 -mindepth 1 -type d | while read -r mountpoint; do
-   file="$mountpoint/hello.txt"
+   local file="$mountpoint/hello.txt"
    printf 'Testing write to %s\n' "$file"
    if ! touch "$file"; then
      printf 'Failed to write to %s\n' "$file"
+     rc=1
    else
     echo "hello, world" > "$file"
    fi
- done
+   rm -f "$file" || :
+  done
+
+  # bring it back up
+  wsl-vhd down -f "$configfile" "${vhd_name:-}" || :
+  wsl-vhd up || :
+  return $rc
 }
 
 main "$@"

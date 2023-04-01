@@ -1,6 +1,7 @@
 # wsl-vhd
 
-Create, manage and automount VHD's on boot.
+Store your stuff (code, etc) on a virtual disk (VHDX), instead of inside your WSL distribution.
+Supports automounting, access from any distribution, and multiple filesystems (ext,btrfs,ntfs,exfat,vfat).
 
 The blogpost which inspired this project: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
 
@@ -54,13 +55,9 @@ sudo ln -sf "$(pwd)/wsl-vhd" /usr/local/bin/wsl-vhd
 
 ## Configuration
 
-Create and add the following to `/etc/wsl-vhd.conf`:
+Create and add the following to `/etc/wsl-vhd.conf` (Optionally adjusting):
 
 ```
-[global]
-uid=1000
-gid=1000
-
 [C:\wsl-vhd\test-ext4.vhdx]
 fstype=ext4
 size_in_mb=100

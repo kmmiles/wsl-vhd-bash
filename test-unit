@@ -1,48 +1,56 @@
 #!/bin/bash
+#
+source ./wsl-vhd >/dev/null 2>&1
+set -euo pipefail
 
-main() {
-  source wsl-vhd >/dev/null 2>&1
-  # test logging::
-  logging::debug "test debug"
-  logging::info "test info"
-  logging::warning "test warning"
-  logging::error "test error"
-  logging::critical "test critical"
+# test log::
+log::debug "test debug"
+log::info "test info"
+log::warning "test warning"
+log::error "test error"
+log::critical "test critical"
 
-  # test path::
-  paths=(
-    '/mnt/c/disk.vhdx'
-    './mnt/c/disk.vhdx'
-    'mnt/c/disk.vhdx'
-    'C:\disk.vhdx'
-    'c:\disk.vhdx'
-    '\\?\C:\foo.vhdx'
-    '\\?\foo.vhdx'
-    'foo.vhdx'
-    '.\.android\foo.vhdx'
-    '~/foo.vhd'
-  )
+# test path::
+paths=(
+  '/mnt/c/disk.vhdx'
+  './mnt/c/disk.vhdx'
+  'mnt/c/disk.vhdx'
+  'C:\disk.vhdx'
+  'c:\disk.vhdx'
+  '\\?\C:\foo.vhdx'
+  '\\?\foo.vhdx'
+  'foo.vhdx'
+  '.\.android\foo.vhdx'
+  '~/foo.vhd'
+)
 
-  printf '====================================\n'
-  printf 'Test path::to_unix\n'
-  printf '====================================\n'
-  for path in "${paths[@]}"; do
-    printf '[%s] -> [%s]\n' "$path" "$(path::to_unix "$path")"
-  done
+printf '====================================\n'
+printf 'Test path::to_unix\n'
+printf '====================================\n'
+for path in "${paths[@]}"; do
+  printf '[%s] -> [%s]\n' "$path" "$(path::to_unix "$path")"
+done
 
-  printf '====================================\n'
-  printf 'Test path::to_win\n'
-  printf '====================================\n'
-  for path in "${paths[@]}"; do
-    printf '[%s] -> [%s]\n' "$path" "$(path::to_win "$path")"
-  done
+printf '====================================\n'
+printf 'Test path::to_win\n'
+printf '====================================\n'
+for path in "${paths[@]}"; do
+  printf '[%s] -> [%s]\n' "$path" "$(path::to_win "$path")"
+done
 
-  printf '====================================\n'
-  printf 'Test vhd::mountpoint\n'
-  printf '====================================\n'
-  for path in "${paths[@]}"; do
-    printf '[%s] -> [%s]\n' "$path" "$(vhd::mountpoint "$path")"
-  done
-}
+printf '====================================\n'
+printf 'Test vhd::mountpoint\n'
+printf '====================================\n'
+for path in "${paths[@]}"; do
+  printf '[%s] -> [%s]\n' "$path" "$(vhd::mountpoint "$path")"
+done
 
-main "$@"
+printf '====================================\n'
+printf 'Test str::trim\n'
+printf '====================================\n'
+if [[ "$(str::trim " hello   ")" != "hello" ]]; then
+  log::error "str::trim test failed"
+  exit 1
+else
+  log::info "str::trim test passed"
+fi

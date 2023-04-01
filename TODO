@@ -1,4 +1,0 @@
-- ** rewrite in a more structured language **
-- make use of bash `readonly`
-- do something to make `root` vs user and `sudo` more sane
-
