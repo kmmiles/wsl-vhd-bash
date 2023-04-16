@@ -1,6 +1,7 @@
 # wsl-vhd-bash
 
-With this script you can store your data (like your code) in a virtual disk, using the filesystem of your choice (ext4, btrfs, ntfs, exfat, etc). This virtual disk can be automatically mounted and shared between all WSL2 distributions.
+Store stuff (like your code) in a virtual disk, with the filesystem of your choice (ext4, btrfs, ntfs, exfat, etc).
+This virtual disk can be automatically mounted and shared between all WSL2 distributions.
 
 *original blogpost: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>*
 
