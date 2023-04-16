@@ -56,10 +56,6 @@ cd ~ && git clone "https://github.com/kmmiles/wsl-vhd-bash.git" && sudo ln -sf "
 Create and add the following to `/etc/wsl-vhd.conf`:
 
 ```
-[global]
-uid=1000
-gid=1000
-
 [C:\wsl-vhd\test-ext4.vhdx]
 fstype=ext4
 size_in_mb=100
