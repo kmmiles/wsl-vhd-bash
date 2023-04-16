@@ -2,9 +2,7 @@
 
 With this script you can store your data (like your code) in a virtual disk, using the filesystem of your choice (ext4, btrfs, ntfs, exfat, etc). This virtual disk can be automatically mounted and shared between all WSL2 distributions.
 
-created, formatted and mounted when launching WSL. As a bonus the mount is automatically shared between all WSL distributions.
-
-original blogpost: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>
+*original blogpost: <https://kmmiles.github.io/wsl/vhd/linux/2022/12/20/wsl-vhd.html>*
 
 ## Requirements
 
