@@ -388,7 +388,11 @@ fstype::is_fuse() {
 ################################################################################
 # fstype::is_win <fstype>
 #
-# Return success if <fstype> is a windows filesystem (i.e. requires a partition)
+# Return success if <fstype> is a "Windows" filesystem. 
+#
+# (These file systems must exist on a partition, not the raw disk.
+# Otherwise, Windows can’t natively mount them, which defeats the purpose of
+# using a Windows file system type.)
 ################################################################################
 fstype::is_win() {
   local fstype="${1:-}"
@@ -702,6 +706,7 @@ vhd::chown() {
 # -p <partition>
 ################################################################################
 vhd::mount() {
+  log::debug "$@"
   local OPTIND rc uid gid partition fstype
   while getopts 'u:g:p:' flag; do
     case "${flag}" in
@@ -830,6 +835,7 @@ vhd::mountpoints() {
 # Unmounts all vhd's, or just [vhd] if specified.
 ################################################################################
 vhd::unmount() {
+  log::debug "$@"
   local vhd="${1:-}"
   local device
   local fstype
@@ -991,6 +997,7 @@ vhd::format() {
 # Mounts each VHD in <inifile> or the VHD specified by [vhd].
 ################################################################################
 vhd::up() {
+  log::debug "$@"
   handle_vhd() {
     local -n data=$1
     local vhd="${data["vhd"]:-}"
@@ -1130,7 +1137,7 @@ vhd::down() {
 #################################################################################
 
 wsl-vhd-up() {
-  log::debug "wsl-vhd up $*"
+  log::debug "$@"
   usage() {
     cat <<EOF
 Usage: $PROG_NAME up [OPTIONS] [VHD]
