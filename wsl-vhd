@@ -916,7 +916,7 @@ vhd::create() {
 }
 
 ################################################################################
-# Usage: vhd::format [options] <vhd>
+# Usage: wsl-vhd-format [options] <vhd>
 #
 # options
 # -t <fstype> (default: ext4)
@@ -924,13 +924,24 @@ vhd::create() {
 #
 # Partition 0 means format the whole device.
 ################################################################################
-vhd::format() {
+vhd::format() { wsl-vhd-format "$@" ; } 
+
+wsl-vhd-format() {
+  usage() {
+    printf 'Usage: %s [options] <vhd>\n\n' "wsl-vhd-format"
+    printf 'options\n'
+    printf ' -t <fstype> (default: ext4)\n'
+    printf ' -p <partition> (default: 0)\n\n'
+    printf 'Partition 0 means format the whole device.\n'
+  }
+
   local OPTIND rc fstype partition vhd out
   while getopts 't:p:' flag; do
     case "${flag}" in
       t) fstype="$OPTARG" ;;
       p) partition="$OPTARG" ;;
       *)
+        usage
         return $ERR_ARGS
         ;;
     esac
@@ -938,7 +949,10 @@ vhd::format() {
 
   shift $((OPTIND - 1))
   vhd="${1:-}"
-  [[ -n "$vhd" ]] || return $ERR_ARGS
+  if [[ -z "$vhd" ]]; then
+    usage
+    return $ERR_ARGS
+  fi
 
   # set default fstype
   [[ -n "${fstype:-}" ]] || fstype="ext4"
@@ -949,7 +963,7 @@ vhd::format() {
   vhd::unmount "$vhd" || :
   device=$(vhd::attach "$vhd") || {
     rc=$?
-    log::debug "vhd::attach failed with $(str::error $rc)"
+    log::error "${vhd}: $(str::error $rc)"
     return $rc
   }
 
@@ -965,7 +979,7 @@ vhd::format() {
     out=$(printf 'n\np\n%s\n\n\nt 1\n7\nw\n' "$partition" | sudo fdisk "$device")
     rc=$?
     if ((rc != 0)); then
-      log::debug "$vhd: fdisk $device failed with $rc"
+      log::error "$vhd: fdisk $device failed with $rc"
       return $ERR_GENERAL
     fi
     device="${device}${partition}"
@@ -978,7 +992,7 @@ vhd::format() {
   mkfsargs+=("$device")
   out=$(sudo mkfs "${mkfsargs[@]}" 2>&1) || {
     rc=$?
-    log::debug "returned $rc: sudo mkfs ${mkfsargs[*]}"
+    log::error "returned $rc: sudo mkfs ${mkfsargs[*]}"
     log::debug "$out"
     if grep -q "too small" <<<"$out"; then
       return $ERR_TOO_SMALL
@@ -1215,14 +1229,14 @@ EOF
 wsl-vhd-create() {
   usage() {
     cat <<EOF
-Usage: $PROG_NAME <VHD> <SIZE_IN_MB>
+Usage: $PROG_NAME create <VHD> <SIZE_IN_MB>
 
 Create a new <VHD>, <SIZE_IN_MB> megabytes large. 
 This simply creates the image, not the filesystem.
 
 EXAMPLES
 
-$ $PROG_NAME create /mnt/c/code.vhdx
+$ $PROG_NAME create /mnt/c/code.vhdx 100
 EOF
   }
 
@@ -1254,48 +1268,6 @@ EOF
   }
 
   log::info "$vhd: Successfully created ${size_in_mb}M image"
-}
-
-wsl-vhd-format() {
-  log::debug "wsl-vhd format $*"
-  usage() {
-    cat <<EOF
-Usage: $PROG_NAME format <DEVICE> <FS>
-
-Format <DEVICE> with <FS>
-
-Supported filesystems: $(sys::filesystems | tr '\n' ' ')
-EOF
-  }
-
-  local OPTIND rc
-  while getopts 'h' flag "$@"; do
-    case "${flag}" in
-      *)
-        usage
-        return 1
-        ;;
-    esac
-  done
-
-  shift $((OPTIND - 1))
-  local device="${1:-}"
-  local fstype="${2:-}"
-  shift 2
-
-  if [[ -z "$device" ]] || [[ -z "$fstype" ]]; then
-    usage
-    return 1
-  fi
-
-  local rc
-  vhd::format "$vhd" >/dev/null || {
-    rc=$?
-    log::error "$vhd: $(str::error $rc)"
-    return $rc
-  }
-
-  log::info "$vhd: Formatted as $fstype"
 }
 
 wsl-vhd-mount() {
